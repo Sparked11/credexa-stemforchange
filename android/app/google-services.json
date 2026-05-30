@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "824629614680",
+    "project_id": "credexa-de0fb",
+    "storage_bucket": "credexa-de0fb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:824629614680:android:06da15aca6bc2cb1c9122d",
+        "android_client_info": {
+          "package_name": "com.example.credexa_stemforchange"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "824629614680-sk2m2dpbt6lmp6tdl6v6ugnd8fnofvca.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC14bJZ8vt1ePzuUyz74f3eaMLNIHu7YbY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "824629614680-sk2m2dpbt6lmp6tdl6v6ugnd8fnofvca.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "824629614680-o95178rol2s07ss751s53tkto3fg49t4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.credexaStemforchange"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

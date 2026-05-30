@@ -1,0 +1,43 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
+  },
+  "flutter": {
+    "platforms": {
+      "macos": {
+        "default": {
+          "projectId": "credexa-de0fb",
+          "appId": "1:824629614680:ios:25644f524f91279bc9122d",
+          "uploadDebugSymbols": false,
+          "fileOutput": "macos/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "credexa-de0fb",
+          "configurations": {
+            "android": "1:824629614680:android:06da15aca6bc2cb1c9122d",
+            "ios": "1:824629614680:ios:25644f524f91279bc9122d",
+            "web": "1:824629614680:web:5aebe2ae5d0499ebc9122d"
+          }
+        }
+      },
+      "android": {
+        "default": {
+          "projectId": "credexa-de0fb",
+          "appId": "1:824629614680:android:06da15aca6bc2cb1c9122d",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "credexa-de0fb",
+          "appId": "1:824629614680:ios:25644f524f91279bc9122d",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      }
+    }
+  }
+}
