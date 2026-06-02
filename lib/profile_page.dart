@@ -1,8 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'auth_service.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
@@ -136,6 +141,8 @@ class _ProfilePageState extends State<ProfilePage> {
               SliverToBoxAdapter(
                   child: _buildStats(data.checks, data.debiases, data.posts)),
               SliverToBoxAdapter(child: const _MaturitySection()),
+              SliverToBoxAdapter(child: const _SurveySection()),
+              SliverToBoxAdapter(child: const _ProgressReportSection()),
               SliverToBoxAdapter(
                   child: _buildBadges(
                       data.checks, data.debiases, data.posts, data.quests)),
@@ -822,5 +829,483 @@ class _MaturitySection extends StatelessWidget {
         width: 1,
         height: 36,
         color: Colors.white.withValues(alpha: 0.2),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SURVEY SUMMARY SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+class _SurveySection extends StatefulWidget {
+  const _SurveySection();
+  @override
+  State<_SurveySection> createState() => _SurveySectionState();
+}
+
+class _SurveySectionState extends State<_SurveySection> {
+  int          _count    = 0;
+  int          _positive = 0;
+  List<String> _comments = [];
+  bool         _loading  = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final count    = await UserProgressService.getSurveyCount();
+    final positive = await UserProgressService.getSurveyPositive();
+    final comments = await UserProgressService.getSurveyComments();
+    if (mounted) {
+      setState(() {
+        _count    = count;
+        _positive = positive;
+        _comments = comments;
+        _loading  = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SizedBox.shrink();
+    if (_count == 0) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: const Row(
+            children: [
+              Text('📊', style: TextStyle(fontSize: 22)),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Session feedback appears here after every 5 fact-checks.',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF64748B),
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final pct = (_positive / _count * 100).round();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Text('📊', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              const Text('Session Feedback',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1E293B),
+                  )),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFFFF5),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: Text('$pct% helpful',
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF16A34A),
+                    )),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text('Based on $_count session${_count == 1 ? '' : 's'}  •  '
+                '$_positive rated helpful',
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF64748B),
+                )),
+            if (_comments.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Text('Recent comments',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF64748B),
+                  )),
+              const SizedBox(height: 8),
+              ..._comments.take(3).map((c) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text('"$c"',
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF1E293B),
+                            height: 1.4,
+                          )),
+                    ),
+                  )),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROGRESS REPORT SECTION  — card + share button
+// ─────────────────────────────────────────────────────────────────────────────
+class _ProgressReportSection extends StatefulWidget {
+  const _ProgressReportSection();
+  @override
+  State<_ProgressReportSection> createState() => _ProgressReportSectionState();
+}
+
+class _ProgressReportSectionState extends State<_ProgressReportSection> {
+  final _repaintKey = GlobalKey();
+  bool _sharing = false;
+
+  static const _quotes = [
+    'Critical thinking is not a gift — it is a skill that can be built.',
+    'In a world of noise, the ability to find truth is a superpower.',
+    'The first step in fighting misinformation is knowing how to question it.',
+    'Media literacy is the new literacy.',
+    'Every fact-check you run is a vote for truth.',
+    'Skepticism, applied wisely, is an act of care — for yourself and others.',
+    'An informed citizen is the foundation of a just society.',
+  ];
+
+  String get _quote => _quotes[DateTime.now().weekday % _quotes.length];
+
+  Future<void> _shareReport() async {
+    setState(() => _sharing = true);
+    try {
+      final boundary = _repaintKey.currentContext!.findRenderObject()
+          as RenderRepaintBoundary;
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData!.buffer.asUint8List();
+      final dir  = await getTemporaryDirectory();
+      final file = File('${dir.path}/credexa_report.png');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'My Credexa Media Literacy Report 🧠\n'
+            'Building critical thinking — one fact-check at a time.',
+      );
+    } catch (_) {
+      // Silently ignore share errors (user cancelled, etc.)
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<UserProgressStats>(
+      valueListenable: UserProgressService.stats,
+      builder: (_, s, __) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Report card (captured by RepaintBoundary) ──
+            RepaintBoundary(
+              key: _repaintKey,
+              child: _ProgressReportCard(stats: s, quote: _quote),
+            ),
+            const SizedBox(height: 12),
+            // ── Share button ──
+            GestureDetector(
+              onTap: _sharing ? null : _shareReport,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: BoxDecoration(
+                  color: _sharing
+                      ? const Color(0xFF64748B)
+                      : const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: _sharing
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          )
+                        ],
+                ),
+                child: _sharing
+                    ? const Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white)),
+                        ),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.ios_share_rounded,
+                              color: Colors.white, size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            'Share My Report',
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROGRESS REPORT CARD — the shareable image widget
+// ─────────────────────────────────────────────────────────────────────────────
+class _ProgressReportCard extends StatelessWidget {
+  const _ProgressReportCard({
+    required this.stats,
+    required this.quote,
+  });
+  final UserProgressStats stats;
+  final String quote;
+
+  @override
+  Widget build(BuildContext context) {
+    final lvl      = stats.level;
+    final progress = lvl.progress(stats.maturityPoints);
+    final pct      = stats.predictionsTotal == 0
+        ? '--'
+        : '${(stats.predictionAccuracy * 100).round()}%';
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ──
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: const Text('CREDEXA · MEDIA LITERACY',
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 8,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF22C55E),
+                      letterSpacing: 1.0,
+                    )),
+              ),
+              const Spacer(),
+              const Text('🕊️', style: TextStyle(fontSize: 20)),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // ── Level ──
+          Row(
+            children: [
+              Text(lvl.emoji,
+                  style: const TextStyle(fontSize: 36)),
+              const SizedBox(width: 14),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('MEDIA MATURITY LEVEL',
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF4ADE80),
+                        letterSpacing: 1.1,
+                      )),
+                  Text(lvl.title,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      )),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // ── Progress bar ──
+          ClipRRect(
+            borderRadius: BorderRadius.circular(100),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 6,
+              backgroundColor:
+                  Colors.white.withValues(alpha: 0.12),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                  Color(0xFF4ADE80)),
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // ── Stats ──
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                _rStat('🔍', '${stats.predictionsTotal}', 'Checks'),
+                _rDivider(),
+                _rStat('🎯', pct, 'Accuracy'),
+                _rDivider(),
+                _rStat('📚', '${stats.questsAnswered}', 'Quests'),
+                _rDivider(),
+                _rStat('⭐', '${stats.maturityPoints}', 'Points'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // ── Quote ──
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                    color: const Color(0xFF4ADE80), width: 3),
+              ),
+            ),
+            child: Text(
+              '"$quote"',
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF94A3B8),
+                height: 1.6,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Footer ──
+          const Text(
+            'Generated by Credexa · UN SDG Goal 16  🕊️',
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF475569),
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _rStat(String emoji, String value, String label) => Expanded(
+        child: Column(
+          children: [
+            Text(emoji,
+                style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 3),
+            Text(value,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                )),
+            Text(label,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 8,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF64748B),
+                )),
+          ],
+        ),
+      );
+
+  Widget _rDivider() => Container(
+        width: 1,
+        height: 32,
+        color: Colors.white.withValues(alpha: 0.1),
       );
 }

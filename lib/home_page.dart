@@ -453,11 +453,27 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
         }
       });
       _resultsCtrl.forward();
-      ProfileService.incrementCheck();
+      await ProfileService.incrementCheck();
+      // Show micro-survey every 5 completed checks.
+      final checks = ProfileService.data.value.checks;
+      if (checks > 0 && checks % 5 == 0 && mounted) {
+        Future.delayed(const Duration(milliseconds: 900), () {
+          if (mounted) _showMicroSurvey();
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() { _scanning = false; _error = e.toString().replaceFirst('Exception: ', ''); });
     }
+  }
+
+  Future<void> _showMicroSurvey() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => const _MicroSurveySheet(),
+    );
   }
 
   void _useExample(String text) {
@@ -1441,9 +1457,14 @@ class _ResultsPanelState extends State<_ResultsPanel> {
         ),
         const SizedBox(height: 16),
 
-        // ── Model council ──────────────────────────────────────────────────
+        // ── Model council (AI models only — Web Search excluded from display) ───
         if (widget.result.modelResults.isNotEmpty) ...[
-          Container(
+          Builder(builder: (context) {
+          final aiModels = widget.result.modelResults
+              .where((m) => !m.model.contains('Web Search'))
+              .toList();
+          if (aiModels.isEmpty) return const SizedBox.shrink();
+          return Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: Colors.white,
@@ -1477,18 +1498,18 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                   child: _debateMode
                       ? _DebateThread(
                           key: const ValueKey('debate'),
-                          modelResults: widget.result.modelResults,
+                          modelResults: aiModels,
                           synthesis: widget.result.synthesis,
                         )
                       : Column(
                           key: const ValueKey('scores'),
                           children: [
-                            ...widget.result.modelResults.asMap().entries.map((e) {
+                            ...aiModels.asMap().entries.map((e) {
                               final i = e.key;
                               final m = e.value;
                               return Padding(
                                 padding: EdgeInsets.only(
-                                    bottom: i < widget.result.modelResults.length - 1 ? 10 : 0),
+                                    bottom: i < aiModels.length - 1 ? 10 : 0),
                                 child: m.failed
                                     ? _ModelFailedRow(model: m)
                                     : _ModelScoreRow(model: m),
@@ -1499,7 +1520,8 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                 ),
               ],
             ),
-          ),
+          );          // return Container
+          }),         // Builder
           const SizedBox(height: 12),
         ],
 
@@ -2298,6 +2320,294 @@ class _FinalRulingCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(synthesis.summary,
               style: _m(size: 12, weight: FontWeight.w600, color: _kPrimary, height: 1.55)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Micro-survey bottom sheet ─────────────────────────────────────────────────
+class _MicroSurveySheet extends StatefulWidget {
+  const _MicroSurveySheet();
+
+  @override
+  State<_MicroSurveySheet> createState() => _MicroSurveySheetState();
+}
+
+class _MicroSurveySheetState extends State<_MicroSurveySheet> {
+  bool? _positive;
+  final _commentCtrl = TextEditingController();
+  bool _submitting = false;
+  bool _done = false;
+
+  @override
+  void dispose() {
+    _commentCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_positive == null || _submitting) return;
+    setState(() => _submitting = true);
+    await UserProgressService.recordSurveyResponse(
+      positive: _positive!,
+      comment: _commentCtrl.text.trim().isEmpty ? null : _commentCtrl.text.trim(),
+    );
+    if (mounted) setState(() { _submitting = false; _done = true; });
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 32,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 350),
+        child: _done
+            ? _buildThanks()
+            : _buildForm(),
+      ),
+    );
+  }
+
+  Widget _buildThanks() {
+    return const Padding(
+      key: ValueKey('thanks'),
+      padding: EdgeInsets.symmetric(vertical: 36),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('🎉', style: TextStyle(fontSize: 40)),
+          SizedBox(height: 12),
+          Text(
+            'Thanks! Your feedback helps improve Credexa.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1E293B),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Padding(
+      key: const ValueKey('form'),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(100),
+              ),
+            ),
+          ),
+          // Label
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(100),
+            ),
+            child: const Text(
+              '📊  SESSION FEEDBACK',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF1D4ED8),
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Did Credexa help you think more critically today?',
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF1E293B),
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Thumbs row
+          Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () { HapticFeedback.mediumImpact(); setState(() => _positive = true); },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: _positive == true
+                          ? const Color(0xFFEFFFF5)
+                          : const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _positive == true
+                            ? _kAccent
+                            : const Color(0xFFE2E8F0),
+                        width: 2,
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text('👍', style: TextStyle(fontSize: 32)),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Yes',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: _positive == true
+                                ? _kAccent
+                                : _kSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () { HapticFeedback.mediumImpact(); setState(() => _positive = false); },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: _positive == false
+                          ? const Color(0xFFFFEDE8)
+                          : const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _positive == false
+                            ? _kDanger
+                            : const Color(0xFFE2E8F0),
+                        width: 2,
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text('👎', style: TextStyle(fontSize: 32)),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Not really',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: _positive == false
+                                ? _kDanger
+                                : _kSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Optional comment
+          TextField(
+            controller: _commentCtrl,
+            maxLines: 2,
+            maxLength: 140,
+            style: _m(size: 13, weight: FontWeight.w500),
+            decoration: InputDecoration(
+              hintText: 'Optional: anything specific? (e.g. "I caught a fake headline!")',
+              hintStyle: _m(size: 12, weight: FontWeight.w400, color: const Color(0xFFCBD5E1)),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              contentPadding: const EdgeInsets.all(14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: _kAccent, width: 2),
+              ),
+              counterStyle: _m(size: 10, weight: FontWeight.w500, color: _kSecondary),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Submit
+          GestureDetector(
+            onTap: _positive == null ? null : _submit,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              decoration: BoxDecoration(
+                color: _positive == null
+                    ? const Color(0xFFE2E8F0)
+                    : _kAccent,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: _submitting
+                  ? const Center(
+                      child: SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ),
+                    )
+                  : Text(
+                      'Submit Feedback',
+                      textAlign: TextAlign.center,
+                      style: _m(
+                        size: 14,
+                        weight: FontWeight.w800,
+                        color: _positive == null ? _kSecondary : Colors.white,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Text('Skip', style: _m(size: 12, weight: FontWeight.w600, color: _kSecondary)),
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );

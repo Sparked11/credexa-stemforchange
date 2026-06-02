@@ -189,4 +189,35 @@ class UserProgressService {
       questsCorrect:  s.questsCorrect + (correct ? 1 : 0),
     ));
   }
+
+  // ── Micro-survey ─────────────────────────────────────────────────────────────
+
+  static Future<int>          getSurveyCount()    async => (await SharedPreferences.getInstance()).getInt(_k('sv_count'))    ?? 0;
+  static Future<int>          getSurveyPositive() async => (await SharedPreferences.getInstance()).getInt(_k('sv_pos'))      ?? 0;
+  static Future<List<String>> getSurveyComments() async =>
+      (await SharedPreferences.getInstance()).getStringList(_k('sv_comments')) ?? [];
+
+  static Future<void> recordSurveyResponse({
+    required bool positive,
+    String? comment,
+  }) async {
+    final p       = await SharedPreferences.getInstance();
+    final count   = (p.getInt(_k('sv_count'))  ?? 0) + 1;
+    final pos     = (p.getInt(_k('sv_pos'))    ?? 0) + (positive ? 1 : 0);
+    await p.setInt(_k('sv_count'), count);
+    await p.setInt(_k('sv_pos'),   pos);
+    if (comment != null && comment.trim().isNotEmpty) {
+      final existing = p.getStringList(_k('sv_comments')) ?? [];
+      existing.insert(0, comment.trim());
+      // Keep last 20 comments to avoid unbounded growth.
+      await p.setStringList(_k('sv_comments'), existing.take(20).toList());
+    }
+    // Bonus maturity points for engaging with the survey.
+    await addMaturityPoints(2);
+  }
+
+  static Future<void> addMaturityPoints(int pts) async {
+    final s = stats.value;
+    await _save(s.copyWith(maturityPoints: s.maturityPoints + pts));
+  }
 }

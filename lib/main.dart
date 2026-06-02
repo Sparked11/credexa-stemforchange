@@ -611,46 +611,49 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                 ),
                 const SizedBox(height: 16),
 
-                // ── Community impact ──
+                // ── Core identity statement ──
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
+                      horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('🌍',
-                          style: TextStyle(fontSize: 18)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Credexa's Real-World Impact",
-                              style: TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '14,392 claims checked • 91% flagged misleading • '
-                              '3,847 quests completed • 38 countries',
-                              style: TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                color:
-                                    Colors.white.withValues(alpha: 0.75),
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
+                      const Text(
+                        'What Credexa is, in one sentence:',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFBBF7D0),
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        '"An AI-powered platform that teaches you to evaluate information critically — not just gives you answers."',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        s.predictionsTotal >= 3
+                            ? '📈  Your prediction accuracy is $pct — proof that critical thinking can be learned.'
+                            : '📈  Answer daily quests and check claims to build evidence of your growth.',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withValues(alpha: 0.8),
+                          height: 1.45,
                         ),
                       ),
                     ],
@@ -883,12 +886,6 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       ],
       [
         (
-          icon: Icons.military_tech_rounded,
-          color: Color(0xFFF59E0B),
-          title: 'Learning Quests',
-          desc: 'Gamified challenges to sharpen your misinformation radar.',
-        ),
-        (
           icon: Icons.image_search_rounded,
           color: Color(0xFF8B5CF6),
           title: 'Visual Scanner',
@@ -914,9 +911,8 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
         }
       } else {
         switch (index) {
-          case 0: widget.onNavigateMore?.call('quests');
-          case 1: widget.onNavigateMore?.call('visual_scanner');
-          case 2: widget.onNavigateMore?.call('trust_lens');
+          case 0: widget.onNavigateMore?.call('visual_scanner');
+          case 1: widget.onNavigateMore?.call('trust_lens');
         }
       }
     }
@@ -1051,7 +1047,14 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
   Widget _buildMission() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-      child: Container(
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const _ProblemDefinitionPage(),
+          ));
+        },
+        child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
@@ -1105,11 +1108,292 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
             const Text('🕊️', style: TextStyle(fontSize: 40)),
           ],
         ),
-      ),
+      ),        // Container
+      ),        // GestureDetector
     );
   }
 
   Widget _buildStat() => const _StatRouletteCard();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROBLEM DEFINITION PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ProblemDefinitionPage extends StatelessWidget {
+  const _ProblemDefinitionPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF1F5F9),
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 200,
+            pinned: true,
+            backgroundColor: const Color(0xFF1E293B),
+            surfaceTintColor: Colors.transparent,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: Colors.white, size: 20),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(100),
+                          ),
+                          child: const Text('UN SDG GOAL 16',
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF22C55E),
+                                letterSpacing: 1.1,
+                              )),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Problem Definition',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            height: 1.15,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'The misinformation crisis — who it affects and why it matters.',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF94A3B8),
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── The Problem ───────────────────────────────────────────
+                  _probSection(
+                    emoji: '🌐',
+                    title: 'The Community Problem',
+                    body:
+                        'Misinformation spreads faster than ever — and most people '
+                        'encounter it daily without realizing it. False headlines, '
+                        'manipulated images, and emotionally loaded language flood '
+                        'social media feeds, influencing beliefs, votes, and health '
+                        'decisions.',
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Stats ─────────────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E293B),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('By the numbers',
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF22C55E),
+                            )),
+                        const SizedBox(height: 14),
+                        ...[
+                          ('68%', 'of teens have shared misinformation without realizing it'),
+                          ('6×', 'faster — how quickly false news spreads vs. factual news'),
+                          ('26%', 'of Americans can correctly identify fake news'),
+                          ('50%+', 'of teens get news from social media — zero editorial filter'),
+                        ].map((s) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    width: 56,
+                                    child: Text(s.$1,
+                                        style: const TextStyle(
+                                          fontFamily: 'Montserrat',
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w900,
+                                          color: Colors.white,
+                                        )),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(s.$2,
+                                        style: const TextStyle(
+                                          fontFamily: 'Montserrat',
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFF94A3B8),
+                                          height: 1.5,
+                                        )),
+                                  ),
+                                ],
+                              ),
+                            )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Who is affected ───────────────────────────────────────
+                  _probSection(
+                    emoji: '👥',
+                    title: 'Who Is Affected',
+                    body:
+                        'Teenagers and young adults are the most vulnerable — they '
+                        'consume the most social media and have the least experience '
+                        'evaluating sources. But misinformation affects everyone: it '
+                        'undermines elections, erodes trust in science, and fuels '
+                        'division in communities.',
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Why it matters ────────────────────────────────────────
+                  _probSection(
+                    emoji: '⚖️',
+                    title: 'Why It Matters',
+                    body:
+                        'UN SDG Goal 16 calls for peaceful, just, and inclusive '
+                        'societies with access to accurate information. A democracy '
+                        'cannot function when citizens cannot distinguish fact from '
+                        'fiction. Critical thinking is not a skill people are born '
+                        'with — it has to be taught.',
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Credexa's answer ──────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text('Credexa\'s Answer',
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFFBBF7D0),
+                            )),
+                        SizedBox(height: 8),
+                        Text(
+                          '"An AI-powered platform that teaches users how to evaluate '
+                          'information critically for themselves — not just flags '
+                          'misinformation, but builds the skill to detect it."',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            height: 1.55,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _probSection({
+    required String emoji,
+    required String title,
+    required String body,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text(emoji, style: const TextStyle(fontSize: 20)),
+            const SizedBox(width: 10),
+            Text(title,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1E293B),
+                )),
+          ]),
+          const SizedBox(height: 10),
+          Text(body,
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF64748B),
+                height: 1.6,
+              )),
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1174,7 +1458,12 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Container(
+              child: LayoutBuilder(
+                builder: (context, constraints) => ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.88,
+                  ),
+                  child: Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(24),
@@ -1186,7 +1475,8 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                     ),
                   ],
                 ),
-                child: Column(
+                child: SingleChildScrollView(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1417,10 +1707,13 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                     ],
                     const SizedBox(height: 16),
                   ],
-                ),
-              ),
-            ),
-          ),
+                ),       // Column
+                ),       // SingleChildScrollView
+              ),         // Container
+                ),       // ConstrainedBox
+              ),         // LayoutBuilder
+            ),           // Padding
+          ),             // SafeArea
         ],
       ),
     );
@@ -2453,24 +2746,6 @@ class _MoreNavItem extends StatelessWidget {
       elevation: 12,
       color: Colors.white,
       itemBuilder: (_) => [
-        const PopupMenuItem<String>(
-          value: 'quests',
-          child: Row(
-            children: [
-              Icon(Icons.military_tech_rounded, color: Color(0xFF1E293B), size: 20),
-              SizedBox(width: 12),
-              Text(
-                'Learning Quests',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-            ],
-          ),
-        ),
         const PopupMenuItem<String>(
           value: 'visual_scanner',
           child: Row(
