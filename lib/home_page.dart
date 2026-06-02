@@ -13,6 +13,7 @@ import 'services/analysis_service.dart';
 import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
 import 'services/shared_content_router.dart';
+import 'services/user_progress_service.dart';
 
 // ── Color system ──────────────────────────────────────────────────────────────
 const _kPrimary    = Color(0xFF1E293B);
@@ -278,6 +279,10 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
   String _imageMimeType = 'image/jpeg';
   String? _imageName;
 
+  // Accuracy tracking — reset on every new scan.
+  String? _userPrediction;   // 'true' or 'false', set before results arrive
+  bool?   _predictionCorrect; // set after AI verdict is known
+
   static const _examples = [
     '5G towers are causing birds to fall from the sky.',
     'Scientists prove coffee cures cancer.',
@@ -405,12 +410,17 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
     final hasImage = _imageBytes != null;
     if (text.isEmpty && !hasImage) return;
     _query = text;
-    setState(() { _scanning = true; _showResults = false; _error = null; });
+    setState(() {
+      _scanning = true;
+      _showResults = false;
+      _error = null;
+      _userPrediction = null;
+      _predictionCorrect = null;
+    });
     _resultsCtrl.reset();
     try {
       final AnalysisResult result;
       if (hasImage) {
-        // OCR the image first so the analysis works on actual text, not a visual description
         final extracted = await OcrService.extractText(_imageBytes!, _imageMimeType);
         if (extracted.trim().isNotEmpty) {
           _query = extracted.trim();
@@ -425,10 +435,19 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
         result = await AnalysisService.analyzeWithSearch(text);
       }
       if (!mounted) return;
+
+      // Record accuracy prediction if the user made one before seeing the result.
+      bool? correct;
+      if (_userPrediction != null) {
+        correct = await UserProgressService.recordPrediction(
+            _userPrediction!, result.synthesis.finalVerdict);
+      }
+
       setState(() {
         _scanning = false;
         _showResults = true;
         _result = result;
+        _predictionCorrect = correct;
         if (result.extractedText != null && result.extractedText!.isNotEmpty) {
           _textCtrl.text = result.extractedText!;
         }
@@ -487,14 +506,27 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
           ),
           const SizedBox(height: 16),
 
-          // ── Analysis animation ─────────────────────────────────────────────
+          // ── Prediction prompt (shown while AI is thinking) ─────────────────
           if (_scanning) ...[
             const SizedBox(height: 8),
+            if (_userPrediction == null)
+              _PredictionPrompt(
+                onPrediction: (p) => setState(() => _userPrediction = p),
+              )
+            else
+              _PredictionLocked(prediction: _userPrediction!),
+            const SizedBox(height: 16),
             _AnalysisAnimation(
               claim: _imageBytes != null && _textCtrl.text.trim().isEmpty
                   ? 'this image'
                   : _textCtrl.text.trim(),
             ),
+          ],
+
+          // ── Prediction result chip ─────────────────────────────────────────
+          if (_showResults && _predictionCorrect != null) ...[
+            const SizedBox(height: 8),
+            _PredictionResultChip(correct: _predictionCorrect!),
           ],
 
           // ── Example chips ──────────────────────────────────────────────────
@@ -2266,6 +2298,186 @@ class _FinalRulingCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(synthesis.summary,
               style: _m(size: 12, weight: FontWeight.w600, color: _kPrimary, height: 1.55)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Prediction prompt (shown during scanning) ──────────────────────────────────
+class _PredictionPrompt extends StatelessWidget {
+  const _PredictionPrompt({required this.onPrediction});
+  final void Function(String) onPrediction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 3)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('🤔', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 8),
+              Text('Before the AI responds…',
+                  style: _m(size: 13, weight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Do you think this claim is true or false?',
+            style: _m(size: 12, weight: FontWeight.w500, color: _kSecondary, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () { HapticFeedback.selectionClick(); onPrediction('true'); },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFFFF5),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _kAccent),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text('✅', style: TextStyle(fontSize: 14)),
+                        const SizedBox(width: 6),
+                        Text('Likely True',
+                            style: _m(size: 12, weight: FontWeight.w700, color: _kAccent)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () { HapticFeedback.selectionClick(); onPrediction('false'); },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFEDE8),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _kDanger),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text('⚠️', style: TextStyle(fontSize: 14)),
+                        const SizedBox(width: 6),
+                        Text('Likely False',
+                            style: _m(size: 12, weight: FontWeight.w700, color: _kDanger)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: Text('Helps track your critical-thinking growth',
+                style: _m(size: 10, weight: FontWeight.w500, color: _kSecondary)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Prediction locked (user already chose, waiting for AI) ────────────────────
+class _PredictionLocked extends StatelessWidget {
+  const _PredictionLocked({required this.prediction});
+  final String prediction;
+
+  @override
+  Widget build(BuildContext context) {
+    final isTrue = prediction == 'true';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isTrue ? const Color(0xFFEFFFF5) : const Color(0xFFFFEDE8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isTrue ? _kAccent : _kDanger),
+      ),
+      child: Row(
+        children: [
+          Text(isTrue ? '✅' : '⚠️', style: const TextStyle(fontSize: 16)),
+          const SizedBox(width: 10),
+          Text(
+            'Your prediction: ${isTrue ? "Likely True" : "Likely False"} — waiting for AI…',
+            style: _m(size: 12, weight: FontWeight.w600,
+                color: isTrue ? _kAccent : _kDanger),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Prediction result chip (shown after results arrive) ───────────────────────
+class _PredictionResultChip extends StatelessWidget {
+  const _PredictionResultChip({required this.correct});
+  final bool correct;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: correct ? const Color(0xFFEFFFF5) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: correct ? _kAccent : const Color(0xFFF59E0B)),
+      ),
+      child: Row(
+        children: [
+          Text(correct ? '🎉' : '💡', style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  correct ? 'You predicted correctly! +5 pts' : 'Learning moment! +1 pt',
+                  style: _m(
+                      size: 13,
+                      weight: FontWeight.w800,
+                      color: correct ? _kAccent : const Color(0xFFD97706)),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  correct
+                      ? 'Your media instincts are sharp. Keep it up.'
+                      : 'The AI disagreed with your prediction — check the reasoning below.',
+                  style: _m(
+                      size: 11,
+                      weight: FontWeight.w500,
+                      color: correct
+                          ? const Color(0xFF15803D)
+                          : const Color(0xFF92400E),
+                      height: 1.4),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'auth_service.dart';
 import 'services/profile_service.dart';
+import 'services/user_progress_service.dart';
 
 // ── Typography helper ─────────────────────────────────────────────────────────
 TextStyle _mp({
@@ -134,6 +135,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
               SliverToBoxAdapter(
                   child: _buildStats(data.checks, data.debiases, data.posts)),
+              SliverToBoxAdapter(child: const _MaturitySection()),
               SliverToBoxAdapter(
                   child: _buildBadges(
                       data.checks, data.debiases, data.posts, data.quests)),
@@ -664,4 +666,161 @@ class _BadgeTile extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  MATURITY SECTION — inserted between stats and badges on the profile page
+// ─────────────────────────────────────────────────────────────────────────────
+class _MaturitySection extends StatelessWidget {
+  const _MaturitySection();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<UserProgressStats>(
+      valueListenable: UserProgressService.stats,
+      builder: (_, s, __) {
+        final lvl      = s.level;
+        final progress = lvl.progress(s.maturityPoints);
+        final nextIdx  = kMaturityLevels.indexOf(lvl) + 1;
+        final nextLvl  =
+            nextIdx < kMaturityLevels.length ? kMaturityLevels[nextIdx] : null;
+        final pct = s.predictionsTotal == 0
+            ? '--'
+            : '${(s.predictionAccuracy * 100).round()}%';
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.3),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(lvl.emoji, style: const TextStyle(fontSize: 26)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('MEDIA MATURITY',
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFFBBF7D0),
+                                letterSpacing: 1.2,
+                              )),
+                          Text(lvl.title,
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              )),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(100),
+                      ),
+                      child: Text('${s.maturityPoints} pts',
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          )),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(100),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 7,
+                    backgroundColor: Colors.white.withValues(alpha: 0.25),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xFF4ADE80)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (nextLvl != null)
+                  Text(
+                    '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.75),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _mStat('🎯', 'Accuracy', pct),
+                    _mDivider(),
+                    _mStat('📚', 'Quests', '${s.questsAnswered}'),
+                    _mDivider(),
+                    _mStat('🔍', 'Predictions', '${s.predictionsTotal}'),
+                    _mDivider(),
+                    _mStat('✅', 'Correct', '${s.predictionsCorrect}'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _mStat(String emoji, String label, String value) => Expanded(
+        child: Column(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 3),
+            Text(value,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                )),
+            Text(label,
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 8,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: 0.65),
+                )),
+          ],
+        ),
+      );
+
+  Widget _mDivider() => Container(
+        width: 1,
+        height: 36,
+        color: Colors.white.withValues(alpha: 0.2),
+      );
 }

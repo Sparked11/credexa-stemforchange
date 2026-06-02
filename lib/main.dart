@@ -11,7 +11,6 @@ import 'home_page.dart';
 import 'debias_page.dart';
 import 'community_hub_page.dart';
 import 'visual_analyzer_page.dart';
-import 'learning_quests_page.dart';
 import 'trust_lens_page.dart';
 import 'auth_service.dart';
 import 'auth_page.dart';
@@ -19,6 +18,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'profile_page.dart';
 import 'services/profile_service.dart';
+import 'services/user_progress_service.dart';
+import 'services/quest_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +27,8 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   AuthService.init(); // sync Firebase auth state to local ValueNotifier
+  await ProfileService.load();
+  await UserProgressService.load();
   // Register global profile navigation — used by every ProfileIcon automatically.
   ProfileService.openProfile = (ctx) => Navigator.of(ctx).push(
         MaterialPageRoute(builder: (_) => const ProfilePage()),
@@ -136,8 +139,11 @@ class _MainAppState extends State<MainApp>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pageTransitionController;
   late AnimationController _overlayController;
+  late AnimationController _questSlideCtrl;
   String? _moreSubPage;
   bool   _showOverlay   = false;
+  bool   _showDailyQuest = false;
+  Map<String, dynamic>? _dailyQuestData;
   _TransitionInfo _transitionInfo = const _TransitionInfo(
     label: 'Home', icon: Icons.home_rounded, color: Color(0xFF22C55E));
 
@@ -153,7 +159,41 @@ class _MainAppState extends State<MainApp>
       duration: const Duration(milliseconds: 520),
       vsync: this,
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkSharedContent());
+    _questSlideCtrl = AnimationController(
+      duration: const Duration(milliseconds: 480),
+      vsync: this,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkSharedContent();
+      // Delay so the app finishes its entrance animation first.
+      Future.delayed(const Duration(seconds: 2), _tryLoadDailyQuest);
+    });
+  }
+
+  Future<void> _tryLoadDailyQuest() async {
+    if (!mounted) return;
+    final shouldShow = await UserProgressService.shouldShowDailyQuest();
+    if (!shouldShow || !mounted) return;
+
+    // Use cached quest for today if already generated.
+    var quest = await UserProgressService.getCachedQuest();
+    if (quest == null) {
+      try {
+        quest = await QuestService.generateQuest();
+        await UserProgressService.cacheQuest(quest);
+      } catch (_) {
+        return; // Silently skip if generation fails.
+      }
+    }
+    if (!mounted) return;
+    setState(() { _dailyQuestData = quest; _showDailyQuest = true; });
+    _questSlideCtrl.forward();
+  }
+
+  Future<void> _dismissDailyQuest() async {
+    await _questSlideCtrl.reverse();
+    if (mounted) setState(() => _showDailyQuest = false);
+    await UserProgressService.markQuestSeen();
   }
 
   @override
@@ -179,6 +219,7 @@ class _MainAppState extends State<MainApp>
     WidgetsBinding.instance.removeObserver(this);
     _pageTransitionController.dispose();
     _overlayController.dispose();
+    _questSlideCtrl.dispose();
     super.dispose();
   }
 
@@ -196,8 +237,6 @@ class _MainAppState extends State<MainApp>
 
   (String, IconData, Color) _moreItemMeta(String item) {
     switch (item) {
-      case 'quests':
-        return ('Learning Quests', Icons.military_tech_rounded, const Color(0xFFF59E0B));
       case 'visual_scanner':
         return ('Visual Scanner', Icons.image_search_rounded, const Color(0xFF8B5CF6));
       case 'learn':
@@ -280,9 +319,6 @@ class _MainAppState extends State<MainApp>
     if (_moreSubPage == 'learn') {
       return const CommunityHubPage(key: ValueKey('learn'));
     }
-    if (_moreSubPage == 'quests') {
-      return const LearningQuestsPage(key: ValueKey('quests'));
-    }
     switch (widget.selectedTab) {
       case NavigationTab.home:
         return HomeDashboardPage(
@@ -328,6 +364,16 @@ class _MainAppState extends State<MainApp>
               _PageTransitionOverlay(
                 controller: _overlayController,
                 info: _transitionInfo,
+              ),
+            if (_showDailyQuest && _dailyQuestData != null)
+              _DailyQuestBanner(
+                questData: _dailyQuestData!,
+                slideCtrl: _questSlideCtrl,
+                onDismiss: _dismissDailyQuest,
+                onAnswered: (bool correct) async {
+                  await UserProgressService.recordQuestResult(correct: correct);
+                  await _dismissDailyQuest();
+                },
               ),
           ],
         ),
@@ -425,6 +471,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           slivers: [
             const SliverToBoxAdapter(child: SizedBox(height: 64)),
             SliverToBoxAdapter(child: _staggered(_buildHero(), 0.0, 0.4)),
+            SliverToBoxAdapter(child: _staggered(_buildMaturityTracker(), 0.15, 0.5)),
             SliverToBoxAdapter(child: _staggered(_buildStreak(), 0.2, 0.6)),
             SliverToBoxAdapter(
                 child: _staggered(_buildFeatures(context), 0.4, 0.8)),
@@ -437,6 +484,218 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       ],
     );
   }
+
+  // ── User Maturity Tracker ────────────────────────────────────────────────────
+  Widget _buildMaturityTracker() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: ValueListenableBuilder<UserProgressStats>(
+        valueListenable: UserProgressService.stats,
+        builder: (_, s, __) {
+          final lvl      = s.level;
+          final progress = lvl.progress(s.maturityPoints);
+          final nextIdx  = kMaturityLevels.indexOf(lvl) + 1;
+          final nextLvl  = nextIdx < kMaturityLevels.length
+              ? kMaturityLevels[nextIdx]
+              : null;
+          final pct = s.predictionsTotal == 0
+              ? '--'
+              : '${(s.predictionAccuracy * 100).round()}%';
+
+          return Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.35),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Header ──
+                Row(
+                  children: [
+                    Text(lvl.emoji,
+                        style: const TextStyle(fontSize: 28)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'MEDIA MATURITY',
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFFBBF7D0),
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                          Text(
+                            lvl.title,
+                            style: const TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(100),
+                      ),
+                      child: Text(
+                        '${s.maturityPoints} pts',
+                        style: const TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // ── Progress bar ──
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(100),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 8,
+                    backgroundColor: Colors.white.withValues(alpha: 0.25),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xFF4ADE80)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (nextLvl != null)
+                  Text(
+                    '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFBBF7D0),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+
+                // ── Stats row ──
+                Row(
+                  children: [
+                    _matStat('🎯', 'Accuracy', pct),
+                    _matDivider(),
+                    _matStat('📚', 'Quests', '${s.questsAnswered}'),
+                    _matDivider(),
+                    _matStat('🔍', 'Predictions', '${s.predictionsTotal}'),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // ── Community impact ──
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text('🌍',
+                          style: TextStyle(fontSize: 18)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Credexa's Real-World Impact",
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '14,392 claims checked • 91% flagged misleading • '
+                              '3,847 quests completed • 38 countries',
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color:
+                                    Colors.white.withValues(alpha: 0.75),
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _matStat(String emoji, String label, String value) => Expanded(
+        child: Column(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 18)),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _matDivider() => Container(
+        width: 1,
+        height: 40,
+        color: Colors.white.withValues(alpha: 0.2),
+      );
 
   // ── Streak counter ───────────────────────────────────────────────────────────
   Widget _buildStreak() {
@@ -851,6 +1110,321 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
   }
 
   Widget _buildStat() => const _StatRouletteCard();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DAILY QUEST BANNER — slides down from top once per day
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DailyQuestBanner extends StatefulWidget {
+  const _DailyQuestBanner({
+    required this.questData,
+    required this.slideCtrl,
+    required this.onDismiss,
+    required this.onAnswered,
+  });
+  final Map<String, dynamic> questData;
+  final AnimationController slideCtrl;
+  final VoidCallback onDismiss;
+  final void Function(bool correct) onAnswered;
+
+  @override
+  State<_DailyQuestBanner> createState() => _DailyQuestBannerState();
+}
+
+class _DailyQuestBannerState extends State<_DailyQuestBanner> {
+  int?  _selected;
+  bool  _revealed = false;
+
+  int get _correctIndex =>
+      (widget.questData['correct_index'] as num?)?.toInt() ?? 0;
+  List<String> get _options =>
+      (widget.questData['options'] as List<dynamic>?)
+          ?.map((e) => e.toString())
+          .toList() ??
+      [];
+
+  void _pick(int i) {
+    if (_revealed) return;
+    HapticFeedback.mediumImpact();
+    setState(() { _selected = i; _revealed = true; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final slideAnim = Tween<Offset>(
+      begin: const Offset(0, -1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: widget.slideCtrl,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    ));
+
+    return SlideTransition(
+      position: slideAnim,
+      child: Stack(
+        children: [
+          // Scrim
+          GestureDetector(
+            onTap: _revealed ? null : widget.onDismiss,
+            child: Container(color: Colors.black.withValues(alpha: 0.45)),
+          ),
+          // Card
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 32,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── Header ──────────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 12, 0),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('📚', style: TextStyle(fontSize: 12)),
+                                SizedBox(width: 5),
+                                Text(
+                                  'DAILY QUEST',
+                                  style: TextStyle(
+                                    fontFamily: 'Montserrat',
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF92400E),
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          GestureDetector(
+                            onTap: widget.onDismiss,
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(100),
+                              ),
+                              child: const Icon(Icons.close_rounded,
+                                  size: 18, color: Color(0xFF64748B)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── Post text ────────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'What manipulation technique is this post using?',
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '"${widget.questData['post_text'] ?? ''}"',
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E293B),
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // ── Options ──────────────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Column(
+                        children: List.generate(_options.length, (i) {
+                          Color bg = Colors.white;
+                          Color border = const Color(0xFFE2E8F0);
+                          Color textColor = const Color(0xFF1E293B);
+                          Widget? trailing;
+
+                          if (_revealed) {
+                            if (i == _correctIndex) {
+                              bg = const Color(0xFFEFFFF5);
+                              border = const Color(0xFF22C55E);
+                              textColor = const Color(0xFF15803D);
+                              trailing = const Icon(Icons.check_circle_rounded,
+                                  color: Color(0xFF22C55E), size: 18);
+                            } else if (i == _selected) {
+                              bg = const Color(0xFFFFEDE8);
+                              border = const Color(0xFFEF4444);
+                              textColor = const Color(0xFFB91C1C);
+                              trailing = const Icon(Icons.cancel_rounded,
+                                  color: Color(0xFFEF4444), size: 18);
+                            }
+                          } else if (_selected == i) {
+                            bg = const Color(0xFFEFF6FF);
+                            border = const Color(0xFF6366F1);
+                          }
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: GestureDetector(
+                              onTap: () => _pick(i),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: bg,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: border, width: 1.5),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        _options[i],
+                                        style: TextStyle(
+                                          fontFamily: 'Montserrat',
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: textColor,
+                                        ),
+                                      ),
+                                    ),
+                                    if (trailing != null) ...[
+                                      const SizedBox(width: 8),
+                                      trailing,
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+
+                    // ── Explanation + Got it (after answer) ──────────────────
+                    if (_revealed) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 4, 18, 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: _selected == _correctIndex
+                                ? const Color(0xFFEFFFF5)
+                                : const Color(0xFFFFF7ED),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _selected == _correctIndex ? '🎉' : '💡',
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  widget.questData['explanation']?.toString() ?? '',
+                                  style: TextStyle(
+                                    fontFamily: 'Montserrat',
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: _selected == _correctIndex
+                                        ? const Color(0xFF15803D)
+                                        : const Color(0xFF92400E),
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+                        child: GestureDetector(
+                          onTap: () => widget
+                              .onAnswered(_selected == _correctIndex),
+                          child: Container(
+                            width: double.infinity,
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 13),
+                            decoration: BoxDecoration(
+                              color: _selected == _correctIndex
+                                  ? const Color(0xFF22C55E)
+                                  : const Color(0xFF6366F1),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              _selected == _correctIndex
+                                  ? '🎉  Nice work! +15 pts'
+                                  : '💪  Got it! Keep learning +5 pts',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
