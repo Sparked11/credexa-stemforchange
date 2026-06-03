@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -140,7 +139,6 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
               SliverToBoxAdapter(
                   child: _buildStats(data.checks, data.debiases, data.posts)),
-              SliverToBoxAdapter(child: const _MaturitySection()),
               SliverToBoxAdapter(child: const _SurveySection()),
               SliverToBoxAdapter(child: const _ProgressReportSection()),
               SliverToBoxAdapter(
@@ -676,163 +674,6 @@ class _BadgeTile extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  MATURITY SECTION — inserted between stats and badges on the profile page
-// ─────────────────────────────────────────────────────────────────────────────
-class _MaturitySection extends StatelessWidget {
-  const _MaturitySection();
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<UserProgressStats>(
-      valueListenable: UserProgressService.stats,
-      builder: (_, s, __) {
-        final lvl      = s.level;
-        final progress = lvl.progress(s.maturityPoints);
-        final nextIdx  = kMaturityLevels.indexOf(lvl) + 1;
-        final nextLvl  =
-            nextIdx < kMaturityLevels.length ? kMaturityLevels[nextIdx] : null;
-        final pct = s.predictionsTotal == 0
-            ? '--'
-            : '${(s.predictionAccuracy * 100).round()}%';
-
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF6366F1).withValues(alpha: 0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(lvl.emoji, style: const TextStyle(fontSize: 26)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('MEDIA MATURITY',
-                              style: TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFFBBF7D0),
-                                letterSpacing: 1.2,
-                              )),
-                          Text(lvl.title,
-                              style: const TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 17,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.white,
-                              )),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(100),
-                      ),
-                      child: Text('${s.maturityPoints} pts',
-                          style: const TextStyle(
-                            fontFamily: 'Montserrat',
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          )),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(100),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 7,
-                    backgroundColor: Colors.white.withValues(alpha: 0.25),
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                        Color(0xFF4ADE80)),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (nextLvl != null)
-                  Text(
-                    '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
-                    style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white.withValues(alpha: 0.75),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    _mStat('🎯', 'Accuracy', pct),
-                    _mDivider(),
-                    _mStat('📚', 'Quests', '${s.questsAnswered}'),
-                    _mDivider(),
-                    _mStat('🔍', 'Predictions', '${s.predictionsTotal}'),
-                    _mDivider(),
-                    _mStat('✅', 'Correct', '${s.predictionsCorrect}'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _mStat(String emoji, String label, String value) => Expanded(
-        child: Column(
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 3),
-            Text(value,
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                )),
-            Text(label,
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 8,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(alpha: 0.65),
-                )),
-          ],
-        ),
-      );
-
-  Widget _mDivider() => Container(
-        width: 1,
-        height: 36,
-        color: Colors.white.withValues(alpha: 0.2),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  SURVEY SUMMARY SECTION
 // ─────────────────────────────────────────────────────────────────────────────
 class _SurveySection extends StatefulWidget {
@@ -1023,26 +864,160 @@ class _ProgressReportSectionState extends State<_ProgressReportSection> {
 
   Future<void> _shareReport() async {
     setState(() => _sharing = true);
+    final messenger = ScaffoldMessenger.of(context);
+    // Capture values before any await.
+    final stats = UserProgressService.stats.value;
+    final quote = _quote;
     try {
-      final boundary = _repaintKey.currentContext!.findRenderObject()
-          as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 3.0);
-      final byteData =
-          await image.toByteData(format: ui.ImageByteFormat.png);
-      final bytes = byteData!.buffer.asUint8List();
-      final dir  = await getTemporaryDirectory();
-      final file = File('${dir.path}/credexa_report.png');
+      // Draw the card using PictureRecorder — no widget tree, no GPU culling.
+      final image    = await _drawReportImage(stats, quote);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      if (byteData == null) throw Exception('PNG encoding returned null');
+
+      final bytes = byteData.buffer.asUint8List();
+      final dir   = await getTemporaryDirectory();
+      final file  = File('${dir.path}/credexa_report.png');
       await file.writeAsBytes(bytes);
+
       await Share.shareXFiles(
         [XFile(file.path)],
         text: 'My Credexa Media Literacy Report 🧠\n'
             'Building critical thinking — one fact-check at a time.',
       );
-    } catch (_) {
-      // Silently ignore share errors (user cancelled, etc.)
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+            e.toString().toLowerCase().contains('cancel')
+                ? 'Share cancelled.'
+                : 'Error: ${e.toString()}',
+          ),
+          duration: const Duration(seconds: 5),
+        ));
+      }
     } finally {
       if (mounted) setState(() => _sharing = false);
     }
+  }
+
+  /// Renders the report card using [ui.PictureRecorder] — bypasses the widget
+  /// tree entirely, so it works regardless of scroll position or GPU culling.
+  static Future<ui.Image> _drawReportImage(
+      UserProgressStats s, String quote) async {
+    const w   = 750.0;
+    const h   = 1000.0;
+    const pad = 50.0;
+    const bw  = w - 2 * pad;
+
+    final recorder = ui.PictureRecorder();
+    final canvas   = Canvas(recorder);
+
+    // Background gradient
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, w, h), const Radius.circular(40)),
+      Paint()
+        ..shader = ui.Gradient.linear(Offset.zero, Offset(w, h),
+            [const Color(0xFF0F172A), const Color(0xFF1E293B)]),
+    );
+
+    // Text helper — system font only (custom fonts are not available to
+    // TextPainter outside the widget tree on iOS).
+    double draw(String text, double x, double y, {
+      double maxW = bw,
+      double fs   = 26,
+      FontWeight fw = FontWeight.normal,
+      Color color   = Colors.white,
+      double lh     = 1.3,
+    }) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            fontSize: fs, fontWeight: fw, color: color,
+            height: lh, decoration: TextDecoration.none,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: maxW);
+      tp.paint(canvas, Offset(x, y));
+      return tp.height;
+    }
+
+    final lvl      = s.level;
+    final progress = lvl.progress(s.maturityPoints).clamp(0.0, 1.0);
+    final pct      = s.predictionsTotal == 0
+        ? '--'
+        : '${(s.predictionAccuracy * 100).round()}%';
+
+    double y = pad;
+
+    // Brand
+    y += draw('CREDEXA  ·  MEDIA LITERACY REPORT',
+        pad, y, fs: 18, fw: FontWeight.bold,
+        color: const Color(0xFF22C55E)) + 32;
+
+    // Level
+    y += draw('${lvl.emoji}  ${lvl.title}',
+        pad, y, fs: 42, fw: FontWeight.bold) + 10;
+    y += draw('MEDIA MATURITY',
+        pad, y, fs: 15, fw: FontWeight.bold,
+        color: const Color(0xFF4ADE80)) + 22;
+
+    // Progress bar
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(pad, y, bw, 10), const Radius.circular(5)),
+      Paint()..color = Colors.white.withValues(alpha: 0.15),
+    );
+    if (progress > 0) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(pad, y, bw * progress, 10), const Radius.circular(5)),
+        Paint()..color = const Color(0xFF4ADE80),
+      );
+    }
+    y += 42;
+
+    // Stats
+    final cols = [
+      ('${s.predictionsTotal}', 'Checks'),
+      (pct, 'Accuracy'),
+      ('${s.questsAnswered}', 'Quests'),
+      ('${s.maturityPoints}', 'Points'),
+    ];
+    final colW   = bw / cols.length;
+    final statsY = y;
+    for (int i = 0; i < cols.length; i++) {
+      final cx = pad + colW * i;
+      draw(cols[i].$1, cx, statsY,      maxW: colW, fs: 30, fw: FontWeight.bold);
+      draw(cols[i].$2, cx, statsY + 44, maxW: colW, fs: 17,
+          color: const Color(0xFF64748B));
+      if (i < cols.length - 1) {
+        canvas.drawLine(
+          Offset(pad + colW * (i + 1), statsY - 4),
+          Offset(pad + colW * (i + 1), statsY + 72),
+          Paint()
+            ..color = Colors.white.withValues(alpha: 0.1)
+            ..strokeWidth = 1.5,
+        );
+      }
+    }
+    y = statsY + 96;
+
+    // Quote
+    canvas.drawRect(
+        Rect.fromLTWH(pad, y, 5, 100), Paint()..color = const Color(0xFF4ADE80));
+    draw('"$quote"', pad + 18, y,
+        maxW: bw - 22, fs: 22, color: const Color(0xFF94A3B8), lh: 1.65);
+    y += 116;
+
+    // Footer
+    draw('Generated by Credexa  ·  UN SDG Goal 16',
+        pad, y, fs: 17, color: const Color(0xFF475569));
+
+    return recorder.endRecording().toImage(w.toInt(), h.toInt());
   }
 
   @override

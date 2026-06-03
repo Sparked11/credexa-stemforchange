@@ -1064,13 +1064,15 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           ),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
+            Row(
+              children: [
+                const Text('🕊️', style: TextStyle(fontSize: 28)),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
                     'UN SDG Goal 16',
                     style: TextStyle(
                       fontFamily: 'Montserrat',
@@ -1079,33 +1081,59 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                       color: Color(0xFF22C55E),
                     ),
                   ),
-                  SizedBox(height: 6),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Peace, Justice & Strong Institutions',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Credexa promotes access to information and protects fundamental freedoms for all.',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF94A3B8),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 14),
+            // Explicit tap affordance
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22C55E).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(100),
+                border: Border.all(
+                    color: const Color(0xFF22C55E).withValues(alpha: 0.4)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   Text(
-                    'Peace, Justice & Strong Institutions',
+                    'See the problem we\'re solving',
                     style: TextStyle(
                       fontFamily: 'Montserrat',
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                      height: 1.3,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF22C55E),
                     ),
                   ),
-                  SizedBox(height: 6),
-                  Text(
-                    'Credexa promotes access to information and protects fundamental freedoms for all.',
-                    style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF94A3B8),
-                      height: 1.5,
-                    ),
-                  ),
+                  SizedBox(width: 4),
+                  Icon(Icons.arrow_forward_rounded,
+                      size: 14, color: Color(0xFF22C55E)),
                 ],
               ),
             ),
-            const SizedBox(width: 16),
-            const Text('🕊️', style: TextStyle(fontSize: 40)),
           ],
         ),
       ),        // Container
