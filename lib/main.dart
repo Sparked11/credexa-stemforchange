@@ -1,17 +1,22 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ignore: unnecessary_import
+import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'models/news_article.dart';
 import 'services/news_service.dart';
 import 'services/share_service.dart';
 import 'services/shared_content_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart';
 import 'debias_page.dart';
 import 'community_hub_page.dart';
-import 'visual_analyzer_page.dart';
 import 'trust_lens_page.dart';
+import 'election_integrity_page.dart';
+import 'onboarding_page.dart';
 import 'auth_service.dart';
 import 'auth_page.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -21,14 +26,70 @@ import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 import 'services/quest_service.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  APP THEME SERVICE  — global dark / light mode with persistence
+// ─────────────────────────────────────────────────────────────────────────────
+class AppThemeService {
+  AppThemeService._();
+
+  static final mode = ValueNotifier<ThemeMode>(ThemeMode.light);
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    mode.value = (p.getBool('darkMode') ?? false)
+        ? ThemeMode.dark
+        : ThemeMode.light;
+  }
+
+  static Future<void> toggle() async {
+    final isDark = mode.value == ThemeMode.dark;
+    mode.value = isDark ? ThemeMode.light : ThemeMode.dark;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('darkMode', !isDark);
+  }
+
+  static bool get isDark => mode.value == ThemeMode.dark;
+
+  static ThemeData get lightTheme => ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1E293B),
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+        fontFamily: 'Montserrat',
+      );
+
+  static ThemeData get darkTheme => ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF22C55E),
+          brightness: Brightness.dark,
+        ).copyWith(
+          surface: const Color(0xFF1E293B),
+          onSurface: Colors.white,
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0F172A),
+        cardColor: const Color(0xFF1E293B),
+        fontFamily: 'Montserrat',
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0F172A),
+          foregroundColor: Colors.white,
+        ),
+      );
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  AuthService.init(); // sync Firebase auth state to local ValueNotifier
-  await ProfileService.load();
-  await UserProgressService.load();
+  AuthService.init();
+  await Future.wait([
+    ProfileService.load(),
+    UserProgressService.load(),
+    AppThemeService.load(),
+  ]);
   // Register global profile navigation — used by every ProfileIcon automatically.
   ProfileService.openProfile = (ctx) => Navigator.of(ctx).push(
         MaterialPageRoute(builder: (_) => const ProfilePage()),
@@ -70,46 +131,55 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   NavigationTab _selectedTab = NavigationTab.home;
+  bool? _hasSeenOnboarding; // null = still loading from prefs
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOnboarding();
+    AppThemeService.mode.addListener(_onThemeChanged);
+  }
+
+  void _onThemeChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    AppThemeService.mode.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  Future<void> _loadOnboarding() async {
+    final p = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() =>
+          _hasSeenOnboarding = p.getBool('hasSeenOnboarding') ?? false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Credexa',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E293B),
-          brightness: Brightness.light,
-        ),
-        textTheme: const TextTheme(
-          displayLarge: TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1E293B),
-          ),
-          displayMedium: TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1E293B),
-          ),
-          bodyLarge: TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 16,
-            color: Color(0xFF64748B),
-          ),
-          bodyMedium: TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 14,
-            color: Color(0xFF64748B),
-          ),
-        ),
-      ),
+      themeMode: AppThemeService.mode.value,
+      theme: AppThemeService.lightTheme,
+      darkTheme: AppThemeService.darkTheme,
       home: ValueListenableBuilder<AuthUser?>(
         valueListenable: AuthService.authState,
         builder: (ctx, user, _) {
+          // Still reading prefs — show blank splash to avoid flicker.
+          if (_hasSeenOnboarding == null) {
+            return Scaffold(
+              backgroundColor: Theme.of(ctx).scaffoldBackgroundColor,
+              body: const SizedBox.shrink(),
+            );
+          }
+          // First launch → show onboarding before auth.
+          if (!_hasSeenOnboarding!) {
+            return OnboardingPage(
+              onComplete: () => setState(() => _hasSeenOnboarding = true),
+            );
+          }
           if (user == null) return const AuthPage();
           return MainApp(
             selectedTab: _selectedTab,
@@ -141,8 +211,11 @@ class _MainAppState extends State<MainApp>
   late AnimationController _overlayController;
   late AnimationController _questSlideCtrl;
   String? _moreSubPage;
-  bool   _showOverlay   = false;
+  bool   _showOverlay    = false;
   bool   _showDailyQuest = false;
+  bool   _questMinimized = false;
+  bool            _showCredexaAd  = false;
+  DateTime?       _lastAdShown;
   Map<String, dynamic>? _dailyQuestData;
   _TransitionInfo _transitionInfo = const _TransitionInfo(
     label: 'Home', icon: Icons.home_rounded, color: Color(0xFF22C55E));
@@ -167,6 +240,8 @@ class _MainAppState extends State<MainApp>
       _checkSharedContent();
       // Delay so the app finishes its entrance animation first.
       Future.delayed(const Duration(seconds: 2), _tryLoadDailyQuest);
+      // Show Credexa+ ad on first launch after daily quest has appeared.
+      Future.delayed(const Duration(seconds: 10), () => _maybeShowAd(delayMs: 0));
     });
   }
 
@@ -192,8 +267,33 @@ class _MainAppState extends State<MainApp>
 
   Future<void> _dismissDailyQuest() async {
     await _questSlideCtrl.reverse();
-    if (mounted) setState(() => _showDailyQuest = false);
+    if (mounted) setState(() { _showDailyQuest = false; _questMinimized = false; });
     await UserProgressService.markQuestSeen();
+  }
+
+  // X button: slide the banner out but keep the quest alive as a mini chip.
+  Future<void> _minimizeQuest() async {
+    await _questSlideCtrl.reverse();
+    if (mounted) setState(() => _questMinimized = true);
+    // Do NOT call markQuestSeen — quest remains accessible all day.
+  }
+
+  // Mini-chip tap: re-expand the banner.
+  void _expandQuest() {
+    setState(() => _questMinimized = false);
+    _questSlideCtrl.forward();
+  }
+
+  // Show the Credexa+ ad with a 3-minute cooldown between showings.
+  void _maybeShowAd({int delayMs = 1000}) {
+    final now = DateTime.now();
+    if (_lastAdShown != null && now.difference(_lastAdShown!).inMinutes < 3) return;
+    Future.delayed(Duration(milliseconds: delayMs), () {
+      if (!mounted) return;
+      _lastAdShown = DateTime.now();
+      HapticFeedback.mediumImpact();
+      setState(() => _showCredexaAd = true);
+    });
   }
 
   @override
@@ -211,6 +311,8 @@ class _MainAppState extends State<MainApp>
         widget.selectedTab.icon,
         _tabColor(widget.selectedTab),
       );
+      // Show ad after every tab switch (user just finished using a feature).
+      _maybeShowAd(delayMs: 1500);
     }
   }
 
@@ -237,8 +339,8 @@ class _MainAppState extends State<MainApp>
 
   (String, IconData, Color) _moreItemMeta(String item) {
     switch (item) {
-      case 'visual_scanner':
-        return ('Visual Scanner', Icons.image_search_rounded, const Color(0xFF8B5CF6));
+      case 'election':
+        return ('Election Integrity', Icons.how_to_vote_rounded, const Color(0xFF1D4ED8));
       case 'learn':
         return ('Community Hub', Icons.forum_rounded, const Color(0xFF6366F1));
       default:
@@ -304,7 +406,7 @@ class _MainAppState extends State<MainApp>
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => const TrustLensPage(),
         fullscreenDialog: true,
-      ));
+      )).then((_) => _maybeShowAd(delayMs: 800));
       return;
     }
     final (label, icon, color) = _moreItemMeta(item);
@@ -313,8 +415,8 @@ class _MainAppState extends State<MainApp>
   }
 
   Widget _buildPage() {
-    if (_moreSubPage == 'visual_scanner') {
-      return const VisualAnalyzerPage(key: ValueKey('visual_scanner'));
+    if (_moreSubPage == 'election') {
+      return const ElectionIntegrityPage(key: ValueKey('election'));
     }
     if (_moreSubPage == 'learn') {
       return const CommunityHubPage(key: ValueKey('learn'));
@@ -344,7 +446,7 @@ class _MainAppState extends State<MainApp>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         bottom: false,
         child: Stack(
@@ -365,14 +467,29 @@ class _MainAppState extends State<MainApp>
                 controller: _overlayController,
                 info: _transitionInfo,
               ),
-            if (_showDailyQuest && _dailyQuestData != null)
+            if (_showDailyQuest && _dailyQuestData != null && !_questMinimized)
               _DailyQuestBanner(
                 questData: _dailyQuestData!,
                 slideCtrl: _questSlideCtrl,
-                onDismiss: _dismissDailyQuest,
+                onMinimize: _minimizeQuest,
                 onAnswered: (bool correct) async {
                   await UserProgressService.recordQuestResult(correct: correct);
                   await _dismissDailyQuest();
+                },
+              ),
+            if (_showDailyQuest && _questMinimized)
+              Positioned(
+                top: 12,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: _QuestMiniChip(onTap: _expandQuest),
+                ),
+              ),
+            if (_showCredexaAd)
+              _CredexaPlusAd(
+                onDismiss: () {
+                  if (mounted) setState(() => _showCredexaAd = false);
                 },
               ),
           ],
@@ -413,9 +530,7 @@ class HomeDashboardPage extends StatefulWidget {
 
 class _HomeDashboardPageState extends State<HomeDashboardPage>
     with TickerProviderStateMixin {
-  static const _bg       = Color(0xFFF1F5F9);
-  static const _primary  = Color(0xFF1E293B);
-  static const _secondary = Color(0xFF64748B);
+
   static const _accent   = Color(0xFF22C55E);
 
   // Staggered entrance animation — runs once on first build.
@@ -425,6 +540,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
   // Features carousel controller + current page index.
   late final PageController _featuresPageCtrl;
   int _featuresPage = 0;
+  bool _maturityExpanded = true;
 
   @override
   void initState() {
@@ -471,6 +587,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           slivers: [
             const SliverToBoxAdapter(child: SizedBox(height: 64)),
             SliverToBoxAdapter(child: _staggered(_buildHero(), 0.0, 0.4)),
+            SliverToBoxAdapter(child: _staggered(_buildInsightsCarousel(), 0.08, 0.45)),
             SliverToBoxAdapter(child: _staggered(_buildMaturityTracker(), 0.15, 0.5)),
             SliverToBoxAdapter(child: _staggered(_buildStreak(), 0.2, 0.6)),
             SliverToBoxAdapter(
@@ -498,9 +615,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           final nextLvl  = nextIdx < kMaturityLevels.length
               ? kMaturityLevels[nextIdx]
               : null;
-          final pct = s.predictionsTotal == 0
-              ? '--'
-              : '${(s.predictionAccuracy * 100).round()}%';
+          final pct = '${(s.predictionAccuracy * 100).round()}%';
 
           return Container(
             padding: const EdgeInsets.all(18),
@@ -522,142 +637,174 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Header ──
-                Row(
-                  children: [
-                    Text(lvl.emoji,
-                        style: const TextStyle(fontSize: 28)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'MEDIA MATURITY',
-                            style: TextStyle(
-                              fontFamily: 'Montserrat',
-                              fontSize: 9,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFFBBF7D0),
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          Text(
-                            lvl.title,
-                            style: const TextStyle(
-                              fontFamily: 'Montserrat',
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(100),
-                      ),
-                      child: Text(
-                        '${s.maturityPoints} pts',
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // ── Progress bar ──
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(100),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 8,
-                    backgroundColor: Colors.white.withValues(alpha: 0.25),
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                        Color(0xFF4ADE80)),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (nextLvl != null)
-                  Text(
-                    '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
-                    style: const TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFBBF7D0),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-
-                // ── Stats row ──
-                Row(
-                  children: [
-                    _matStat('🎯', 'Accuracy', pct),
-                    _matDivider(),
-                    _matStat('📚', 'Quests', '${s.questsAnswered}'),
-                    _matDivider(),
-                    _matStat('🔍', 'Predictions', '${s.predictionsTotal}'),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // ── Core identity statement ──
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                // ── Header (always visible, tap to collapse) ──
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _maturityExpanded = !_maturityExpanded);
+                  },
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
                     children: [
-                      const Text(
-                        'What Credexa is, in one sentence:',
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFBBF7D0),
-                          letterSpacing: 0.8,
+                      Text(lvl.emoji,
+                          style: const TextStyle(fontSize: 28)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'MEDIA MATURITY',
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFFBBF7D0),
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                            Text(
+                              lvl.title,
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        '"An AI-powered platform that teaches you to evaluate information critically — not just gives you answers."',
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          height: 1.5,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(100),
+                        ),
+                        child: Text(
+                          '${s.maturityPoints} pts',
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      Text(
-                        s.predictionsTotal >= 3
-                            ? '📈  Your prediction accuracy is $pct — proof that critical thinking can be learned.'
-                            : '📈  Answer daily quests and check claims to build evidence of your growth.',
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white.withValues(alpha: 0.8),
-                          height: 1.45,
-                        ),
+                      const SizedBox(width: 8),
+                      AnimatedRotation(
+                        turns: _maturityExpanded ? 0.0 : 0.5,
+                        duration: const Duration(milliseconds: 320),
+                        curve: Curves.easeInOutCubic,
+                        child: const Icon(Icons.keyboard_arrow_up_rounded,
+                            color: Colors.white70, size: 22),
                       ),
                     ],
                   ),
+                ),
+
+                // ── Collapsible body ──
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 350),
+                  curve: Curves.easeInOutCubic,
+                  child: _maturityExpanded
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 14),
+
+                            // ── Progress bar ──
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(100),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 8,
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: 0.25),
+                                valueColor:
+                                    const AlwaysStoppedAnimation<Color>(
+                                        Color(0xFF4ADE80)),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            if (nextLvl != null)
+                              Text(
+                                '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
+                                style: const TextStyle(
+                                  fontFamily: 'Montserrat',
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFBBF7D0),
+                                ),
+                              ),
+                            const SizedBox(height: 16),
+
+                            // ── Stats row ──
+                            Row(
+                              children: [
+                                _matStat('🎯', 'Accuracy', pct),
+                                _matDivider(),
+                                _matStat('📚', 'Quests', '${s.questsAnswered}'),
+                                _matDivider(),
+                                _matStat(
+                                    '🔍', 'Predictions', '${s.predictionsTotal}'),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+
+                            // ── Core identity statement ──
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'What Credexa is, in one sentence:',
+                                    style: TextStyle(
+                                      fontFamily: 'Montserrat',
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFFBBF7D0),
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  const Text(
+                                    '"An AI-powered platform that teaches you to evaluate information critically — not just gives you answers."',
+                                    style: TextStyle(
+                                      fontFamily: 'Montserrat',
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    s.predictionsTotal >= 3
+                                        ? '📈  Your prediction accuracy is $pct — proof that critical thinking can be learned.'
+                                        : '📈  Answer daily quests and check claims to build evidence of your growth.',
+                                    style: TextStyle(
+                                      fontFamily: 'Montserrat',
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                      color:
+                                          Colors.white.withValues(alpha: 0.8),
+                                      height: 1.45,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
                 ),
               ],
             ),
@@ -708,72 +855,8 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
         valueListenable: ProfileService.data,
         builder: (_, data, __) {
           final streak = data.checks + data.debiases + data.posts;
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFFFED7AA)),
-            ),
-            child: Row(
-              children: [
-                const Text('🔥', style: TextStyle(fontSize: 28)),
-                const SizedBox(width: 14),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TweenAnimationBuilder<int>(
-                      tween: IntTween(begin: 0, end: streak),
-                      duration: const Duration(milliseconds: 1100),
-                      curve: Curves.easeOutCubic,
-                      builder: (_, value, __) => Text(
-                        '$value',
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFFEA580C),
-                          height: 1.0,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Action Streak',
-                      style: TextStyle(
-                        fontFamily: 'Montserrat',
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF9A3412),
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(100),
-                  ),
-                  child: const Text(
-                    'Keep it up!',
-                    style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFEA580C),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
+          if (streak == 0) return const SizedBox.shrink();
+          return _StreakCard(streak: streak);
         },
       ),
     );
@@ -782,26 +865,131 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
   Widget _buildNavbar() {
     return Container(
       height: 64,
-      color: _bg,
+      color: Theme.of(context).scaffoldBackgroundColor,
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         children: [
-          SizedBox(
-            height: 62,
-            child: Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                _PulseRing(controller: _pulseCtrl),
-                Image.asset('assets/logomain.png',
-                    height: 62, fit: BoxFit.contain),
-              ],
+          GestureDetector(
+            onTap: kDebugMode ? () async {
+              final nav = Navigator.of(context);
+              final p = await SharedPreferences.getInstance();
+              await p.remove('hasSeenOnboarding');
+              HapticFeedback.mediumImpact();
+              nav.push(MaterialPageRoute(
+                builder: (_) => OnboardingPage(onComplete: nav.pop),
+              ));
+            } : null,
+            child: SizedBox(
+              height: 62,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  _PulseRing(controller: _pulseCtrl),
+                  Image.asset('assets/logomain.png',
+                      height: 62, fit: BoxFit.contain),
+                ],
+              ),
             ),
           ),
           const Spacer(),
+          ValueListenableBuilder<ThemeMode>(
+            valueListenable: AppThemeService.mode,
+            builder: (_, mode, _) {
+              final isDark = mode == ThemeMode.dark;
+              return GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  AppThemeService.toggle();
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeInOut,
+                  width: 40,
+                  height: 40,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF334155)
+                        : const Color(0xFFE2E8F0),
+                    shape: BoxShape.circle,
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    transitionBuilder: (child, anim) => RotationTransition(
+                      turns: anim,
+                      child: FadeTransition(opacity: anim, child: child),
+                    ),
+                    child: Icon(
+                      isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
+                      key: ValueKey(isDark),
+                      size: 18,
+                      color: isDark
+                          ? const Color(0xFFFBBF24)
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           const ProfileIcon(),
         ],
       ),
+    );
+  }
+
+  // ── Social posts carousel ────────────────────────────────────────────────────
+  Widget _buildInsightsCarousel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 4, height: 16,
+                decoration: BoxDecoration(
+                  color: _accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'WHAT CRITICAL THINKERS SPOT FIRST',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 1.1,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const _SocialPostsMarquee(),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
+          child: Row(
+            children: const [
+              Icon(Icons.touch_app_rounded, size: 12, color: Color(0xFF94A3B8)),
+              SizedBox(width: 5),
+              Text(
+                'Tap to pause · Go be Media Mature',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF94A3B8),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -814,7 +1002,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: _accent.withOpacity(0.12),
+              color: _accent.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(100),
             ),
             child: const Text(
@@ -829,24 +1017,24 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
             ),
           ),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             'Fight Misinformation.\nThink Critically.',
             style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 30,
               fontWeight: FontWeight.w900,
-              color: _primary,
+              color: Theme.of(context).colorScheme.onSurface,
               height: 1.15,
             ),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Your AI-powered companion for understanding, identifying, and combating misinformation — aligned with UN SDG 16.',
+          Text(
+            'Your partner in understanding, identifying, and combating misinformation — aligned with UN SDG 16.',
             style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: _secondary,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
               height: 1.6,
             ),
           ),
@@ -886,10 +1074,10 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       ],
       [
         (
-          icon: Icons.image_search_rounded,
-          color: Color(0xFF8B5CF6),
-          title: 'Visual Scanner',
-          desc: 'Detect AI-generated images and deepfakes instantly.',
+          icon: Icons.how_to_vote_rounded,
+          color: Color(0xFF1D4ED8),
+          title: 'Election Integrity',
+          desc: 'Fact-check political claims with bias analysis.',
         ),
         (
           icon: Icons.videocam_rounded,
@@ -911,7 +1099,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
         }
       } else {
         switch (index) {
-          case 0: widget.onNavigateMore?.call('visual_scanner');
+          case 0: widget.onNavigateMore?.call('election');
           case 1: widget.onNavigateMore?.call('trust_lens');
         }
       }
@@ -924,13 +1112,13 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
         children: [
           Row(
             children: [
-              const Text(
+              Text(
                 'Explore Features',
                 style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: _primary,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const Spacer(),
@@ -1008,21 +1196,21 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                                 const Spacer(),
                                 Text(
                                   f.title,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontFamily: 'Montserrat',
                                     fontSize: 14,
                                     fontWeight: FontWeight.w800,
-                                    color: _primary,
+                                    color: Theme.of(context).colorScheme.onSurface,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   f.desc,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontFamily: 'Montserrat',
                                     fontSize: 11,
                                     fontWeight: FontWeight.w500,
-                                    color: _secondary,
+                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
                                     height: 1.4,
                                   ),
                                   maxLines: 2,
@@ -1154,7 +1342,7 @@ class _ProblemDefinitionPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
@@ -1432,12 +1620,12 @@ class _DailyQuestBanner extends StatefulWidget {
   const _DailyQuestBanner({
     required this.questData,
     required this.slideCtrl,
-    required this.onDismiss,
+    required this.onMinimize,
     required this.onAnswered,
   });
   final Map<String, dynamic> questData;
   final AnimationController slideCtrl;
-  final VoidCallback onDismiss;
+  final VoidCallback onMinimize;
   final void Function(bool correct) onAnswered;
 
   @override
@@ -1479,7 +1667,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
         children: [
           // Scrim
           GestureDetector(
-            onTap: _revealed ? null : widget.onDismiss,
+            onTap: _revealed ? null : widget.onMinimize,
             child: Container(color: Colors.black.withValues(alpha: 0.45)),
           ),
           // Card
@@ -1489,7 +1677,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
               child: LayoutBuilder(
                 builder: (context, constraints) => ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.88,
+                    maxHeight: (MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - 24).clamp(400.0, 640.0),
                   ),
                   child: Container(
                 decoration: BoxDecoration(
@@ -1540,16 +1728,16 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                           ),
                           const Spacer(),
                           GestureDetector(
-                            onTap: widget.onDismiss,
+                            onTap: widget.onMinimize,
                             child: Container(
                               width: 32,
                               height: 32,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF1F5F9),
+                                color: Theme.of(context).colorScheme.surface,
                                 borderRadius: BorderRadius.circular(100),
                               ),
-                              child: const Icon(Icons.close_rounded,
-                                  size: 18, color: Color(0xFF64748B)),
+                              child: Icon(Icons.close_rounded,
+                                  size: 18, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55)),
                             ),
                           ),
                         ],
@@ -1557,34 +1745,71 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Post text ────────────────────────────────────────────
+                    // ── Post text (styled as social card) ────────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 18),
                       child: Container(
-                        padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFFF0F4FF), Color(0xFFF5F0FF)],
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFD4CCFF), width: 1.5),
                         ),
+                        padding: const EdgeInsets.all(14),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'What manipulation technique is this post using?',
-                              style: TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF64748B),
-                              ),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF6366F1).withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      widget.questData['topic_emoji'] as String? ?? '📱',
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: const [
+                                    Text(
+                                      'Sample Post',
+                                      style: TextStyle(
+                                        fontFamily: 'Montserrat',
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF1E293B),
+                                      ),
+                                    ),
+                                    Text(
+                                      'Spot the manipulation 👇',
+                                      style: TextStyle(
+                                        fontFamily: 'Montserrat',
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w500,
+                                        color: Color(0xFF94A3B8),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 10),
                             Text(
-                              '"${widget.questData['post_text'] ?? ''}"',
+                              widget.questData['post_text'] ?? '',
                               style: const TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 13,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
                                 color: Color(0xFF1E293B),
                                 height: 1.5,
@@ -1601,28 +1826,49 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                       padding: const EdgeInsets.symmetric(horizontal: 18),
                       child: Column(
                         children: List.generate(_options.length, (i) {
-                          Color bg = Colors.white;
-                          Color border = const Color(0xFFE2E8F0);
+                          const letters = ['A', 'B', 'C', 'D'];
+                          const letterColors = [
+                            Color(0xFF6366F1), // indigo
+                            Color(0xFF8B5CF6), // purple
+                            Color(0xFFF59E0B), // amber
+                            Color(0xFFEC4899), // pink
+                          ];
+
+                          Color bg        = Colors.white;
+                          Color border    = const Color(0xFFE2E8F0);
                           Color textColor = const Color(0xFF1E293B);
-                          Widget? trailing;
+                          Color circleColor = letterColors[i % 4];
+                          Widget circleChild = Text(
+                            letters[i % 4],
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: circleColor,
+                            ),
+                          );
 
                           if (_revealed) {
                             if (i == _correctIndex) {
-                              bg = const Color(0xFFEFFFF5);
-                              border = const Color(0xFF22C55E);
-                              textColor = const Color(0xFF15803D);
-                              trailing = const Icon(Icons.check_circle_rounded,
-                                  color: Color(0xFF22C55E), size: 18);
+                              bg          = const Color(0xFFEFFFF5);
+                              border      = const Color(0xFF22C55E);
+                              textColor   = const Color(0xFF15803D);
+                              circleColor = const Color(0xFF22C55E);
+                              circleChild = const Icon(Icons.check_rounded,
+                                  color: Color(0xFF22C55E), size: 14);
                             } else if (i == _selected) {
-                              bg = const Color(0xFFFFEDE8);
-                              border = const Color(0xFFEF4444);
-                              textColor = const Color(0xFFB91C1C);
-                              trailing = const Icon(Icons.cancel_rounded,
-                                  color: Color(0xFFEF4444), size: 18);
+                              bg          = const Color(0xFFFFEDE8);
+                              border      = const Color(0xFFEF4444);
+                              textColor   = const Color(0xFFB91C1C);
+                              circleColor = const Color(0xFFEF4444);
+                              circleChild = const Icon(Icons.close_rounded,
+                                  color: Color(0xFFEF4444), size: 14);
+                            } else {
+                              textColor = const Color(0xFF94A3B8);
                             }
                           } else if (_selected == i) {
-                            bg = const Color(0xFFEFF6FF);
-                            border = const Color(0xFF6366F1);
+                            bg     = const Color(0xFFEFF6FF);
+                            border = letterColors[i % 4];
                           }
 
                           return Padding(
@@ -1632,7 +1878,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 220),
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 12),
+                                    horizontal: 12, vertical: 11),
                                 decoration: BoxDecoration(
                                   color: bg,
                                   borderRadius: BorderRadius.circular(12),
@@ -1640,21 +1886,28 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                                 ),
                                 child: Row(
                                   children: [
+                                    AnimatedContainer(
+                                      duration: const Duration(milliseconds: 220),
+                                      width: 28,
+                                      height: 28,
+                                      decoration: BoxDecoration(
+                                        color: circleColor.withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Center(child: circleChild),
+                                    ),
+                                    const SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
                                         _options[i],
                                         style: TextStyle(
                                           fontFamily: 'Montserrat',
-                                          fontSize: 12,
+                                          fontSize: 13,
                                           fontWeight: FontWeight.w600,
                                           color: textColor,
                                         ),
                                       ),
                                     ),
-                                    if (trailing != null) ...[
-                                      const SizedBox(width: 8),
-                                      trailing,
-                                    ],
                                   ],
                                 ),
                               ),
@@ -1775,7 +2028,7 @@ class _PulseRingPainter extends CustomPainter {
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5
-      ..color = const Color(0xFF22C55E).withOpacity(0.12);
+      ..color = const Color(0xFF22C55E).withValues(alpha: 0.12);
 
     // Inner ring: radius 20 → 36
     canvas.drawCircle(center, 20 + 16 * t, paint);
@@ -1981,10 +2234,10 @@ class PlaceholderPage extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
+                      color: Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: const Color(0xFFE2E8F0),
+                        color: Theme.of(context).colorScheme.outlineVariant,
                         width: 1.5,
                       ),
                     ),
@@ -2053,19 +2306,33 @@ class _NewsPageState extends State<NewsPage> {
       duration: const Duration(milliseconds: 280),
       height: 64,
       decoration: BoxDecoration(
-        color: _scrolled ? Colors.white : const Color(0xFFF1F5F9),
+        color: Theme.of(context).colorScheme.surface,
         border: _scrolled
             ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
             : null,
         boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 4))]
+            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
             : [],
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
           children: [
-            Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
+            if (kDebugMode)
+              GestureDetector(
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  final p = await SharedPreferences.getInstance();
+                  await p.remove('hasSeenOnboarding');
+                  HapticFeedback.mediumImpact();
+                  nav.push(MaterialPageRoute(
+                    builder: (_) => OnboardingPage(onComplete: nav.pop),
+                  ));
+                },
+                child: Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
+              )
+            else
+              Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
             const Spacer(),
             const ProfileIcon(),
           ],
@@ -2104,12 +2371,12 @@ class _NewsPageState extends State<NewsPage> {
                         ),
                         decoration: BoxDecoration(
                           color: isSelected
-                              ? const Color(0xFF1E293B)
-                              : const Color(0xFFF1F5F9),
+                              ? Theme.of(context).colorScheme.onSurface
+                              : Theme.of(context).colorScheme.surface,
                           border: Border.all(
                             color: isSelected
-                                ? const Color(0xFF1E293B)
-                                : const Color(0xFFE2E8F0),
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context).colorScheme.outlineVariant,
                           ),
                           borderRadius: BorderRadius.circular(20),
                         ),
@@ -2120,8 +2387,8 @@ class _NewsPageState extends State<NewsPage> {
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: isSelected
-                                ? Colors.white
-                                : const Color(0xFF64748B),
+                                ? Theme.of(context).colorScheme.surface
+                                : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
                           ),
                         ),
                       ),
@@ -2145,7 +2412,7 @@ class _NewsPageState extends State<NewsPage> {
                     child: Center(
                       child: CircularProgressIndicator(
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          const Color(0xFF22C55E).withOpacity(0.7),
+                          const Color(0xFF22C55E).withValues(alpha: 0.7),
                         ),
                       ),
                     ),
@@ -2342,13 +2609,13 @@ class _NewsArticleCard extends StatelessWidget {
                     child: Container(
                       height: 200,
                       width: double.infinity,
-                      color: const Color(0xFFF1F5F9),
+                      color: Theme.of(context).colorScheme.surface,
                       child: Image.network(
                         article.imageUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) {
                           return Container(
-                            color: const Color(0xFFF1F5F9),
+                            color: Theme.of(context).colorScheme.surface,
                             child: const Icon(
                               Icons.image_not_supported_rounded,
                               color: Color(0xFFCBD5E1),
@@ -2375,7 +2642,7 @@ class _NewsArticleCard extends StatelessWidget {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: catColor.withOpacity(0.1),
+                                color: catColor.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(100),
                               ),
                               child: Text(
@@ -2399,7 +2666,7 @@ class _NewsArticleCard extends StatelessWidget {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF22C55E).withOpacity(0.15),
+                              color: const Color(0xFF22C55E).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
@@ -2659,12 +2926,13 @@ class _BottomNavBarState extends State<_BottomNavBar> with TickerProviderStateMi
 
   @override
   Widget build(BuildContext context) {
+    final surface = Theme.of(context).colorScheme.surface;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 20,
             offset: const Offset(0, -4),
           ),
@@ -2723,7 +2991,9 @@ class _NavBarItem extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF1E293B).withOpacity(0.08) : Colors.transparent,
+            color: isSelected
+                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -2732,7 +3002,9 @@ class _NavBarItem extends StatelessWidget {
               Icon(
                 tab.icon,
                 size: 24,
-                color: isSelected ? const Color(0xFF1E293B) : const Color(0xFF94A3B8),
+                color: isSelected
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
               ),
               const SizedBox(height: 4),
               Text(
@@ -2741,7 +3013,9 @@ class _NavBarItem extends StatelessWidget {
                   fontFamily: 'Montserrat',
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
-                  color: isSelected ? const Color(0xFF1E293B) : const Color(0xFF94A3B8),
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
                 ),
               ),
             ],
@@ -2775,13 +3049,13 @@ class _MoreNavItem extends StatelessWidget {
       color: Colors.white,
       itemBuilder: (_) => [
         const PopupMenuItem<String>(
-          value: 'visual_scanner',
+          value: 'election',
           child: Row(
             children: [
-              Icon(Icons.image_search_rounded, color: Color(0xFF1E293B), size: 20),
+              Icon(Icons.how_to_vote_rounded, color: Color(0xFF1D4ED8), size: 20),
               SizedBox(width: 12),
               Text(
-                'Visual Scanner',
+                'Election Integrity',
                 style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 14,
@@ -2837,7 +3111,7 @@ class _MoreNavItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: isSelected
-                ? const Color(0xFF1E293B).withOpacity(0.08)
+                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
           ),
@@ -2848,8 +3122,8 @@ class _MoreNavItem extends StatelessWidget {
                 Icons.more_horiz_rounded,
                 size: 24,
                 color: isSelected
-                    ? const Color(0xFF1E293B)
-                    : const Color(0xFF94A3B8),
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
               ),
               const SizedBox(height: 4),
               Text(
@@ -2859,8 +3133,8 @@ class _MoreNavItem extends StatelessWidget {
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
                   color: isSelected
-                      ? const Color(0xFF1E293B)
-                      : const Color(0xFF94A3B8),
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
                 ),
               ),
             ],
@@ -3103,7 +3377,7 @@ class _PageTransitionOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: controller,
-      builder: (_, __) {
+      builder: (_, _) {
         final t = controller.value;
 
         // Backdrop opacity: fade in 0→0.38, hold, fade out 0.62→1.0
@@ -3131,7 +3405,7 @@ class _PageTransitionOverlay extends StatelessWidget {
         return Opacity(
           opacity: backdropOpacity.clamp(0.0, 1.0),
           child: Container(
-            color: const Color(0xFFF1F5F9).withValues(alpha: 0.96),
+            color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.96),
             child: Center(
               child: Transform.scale(
                 scale: centerScale.clamp(0.0, 1.15),
@@ -3255,4 +3529,1064 @@ class _SpinningArcPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SpinningArcPainter old) => old.color != color;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  QUEST MINI CHIP  —  persistent pill shown after the banner is minimized
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _QuestMiniChip extends StatefulWidget {
+  const _QuestMiniChip({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  State<_QuestMiniChip> createState() => _QuestMiniChipState();
+}
+
+class _QuestMiniChipState extends State<_QuestMiniChip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (_, child) => Transform.scale(
+        scale: 1.0 + _pulse.value * 0.04,
+        child: child,
+      ),
+      child: GestureDetector(
+        onTap: () { HapticFeedback.lightImpact(); widget.onTap(); },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEF3C7),
+            borderRadius: BorderRadius.circular(100),
+            border: Border.all(color: const Color(0xFFFBBF24)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.30),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('📚', style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              const Text(
+                'Daily Quest',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF92400E),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // Live dot indicating unanswered quest
+              AnimatedBuilder(
+                animation: _pulse,
+                builder: (_, _) => Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: Color.lerp(
+                      const Color(0xFFF59E0B),
+                      const Color(0xFFEA580C),
+                      _pulse.value,
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  STREAK CARD  —  bobble on tap + floating fire particles
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StreakCard extends StatefulWidget {
+  const _StreakCard({required this.streak});
+  final int streak;
+
+  @override
+  State<_StreakCard> createState() => _StreakCardState();
+}
+
+class _StreakCardState extends State<_StreakCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _bobble;
+  final List<({int id, double x, double y})> _fires = [];
+  int _fireId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _bobble = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+  }
+
+  @override
+  void dispose() {
+    _bobble.dispose();
+    super.dispose();
+  }
+
+  void _onTapDown(TapDownDetails d) {
+    HapticFeedback.mediumImpact();
+    _bobble.forward(from: 0.0);
+    final id = _fireId++;
+    setState(() =>
+        _fires.add((id: id, x: d.localPosition.dx, y: d.localPosition.dy)));
+  }
+
+  void _removeFire(int id) {
+    if (mounted) setState(() => _fires.removeWhere((f) => f.id == id));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // ── Bobble-animated card ─────────────────────────────────────────
+        AnimatedBuilder(
+          animation: _bobble,
+          builder: (_, child) {
+            final t = _bobble.value;
+            double sx, sy;
+            if (t < 0.18) {
+              // Phase 1: quick squash — compress vertically, widen horizontally
+              final p = t / 0.18;
+              sx = 1.0 + p * 0.09;
+              sy = 1.0 - p * 0.08;
+            } else {
+              // Phase 2: elastic spring-back with overshoot
+              final p = Curves.elasticOut
+                  .transform(((t - 0.18) / 0.82).clamp(0.0, 1.0));
+              sx = 1.09 - p * 0.09;
+              sy = 0.92 + p * 0.08;
+            }
+            return Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.diagonal3Values(sx, sy, 1.0),
+              child: child,
+            );
+          },
+          child: GestureDetector(
+            onTapDown: _onTapDown,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFFED7AA)),
+              ),
+              child: Row(
+                children: [
+                  const Text('🔥', style: TextStyle(fontSize: 28)),
+                  const SizedBox(width: 14),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TweenAnimationBuilder<int>(
+                        tween: IntTween(begin: 0, end: widget.streak),
+                        duration: const Duration(milliseconds: 1100),
+                        curve: Curves.easeOutCubic,
+                        builder: (_, value, _) => Text(
+                          '$value',
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFFEA580C),
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Action Streak',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF9A3412),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(100),
+                    ),
+                    child: const Text(
+                      'Keep it up!',
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFEA580C),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        // ── Fire particles ───────────────────────────────────────────────
+        ..._fires.map((f) => _FireParticle(
+              key: ValueKey(f.id),
+              x: f.x,
+              y: f.y,
+              onDone: () => _removeFire(f.id),
+            )),
+      ],
+    );
+  }
+}
+
+// ── Single floating fire emoji ────────────────────────────────────────────────
+class _FireParticle extends StatefulWidget {
+  const _FireParticle({
+    super.key,
+    required this.x,
+    required this.y,
+    required this.onDone,
+  });
+  final double x, y;
+  final VoidCallback onDone;
+
+  @override
+  State<_FireParticle> createState() => _FireParticleState();
+}
+
+class _FireParticleState extends State<_FireParticle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..forward().whenComplete(() {
+        if (mounted) widget.onDone();
+      });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        final t = _ctrl.value;
+        final dy = Curves.easeOut.transform(t) * -80.0;
+        final dx = math.sin(t * math.pi * 2.5) * 9.0;
+        final opacity = (t < 0.45 ? 1.0 : 1.0 - ((t - 0.45) / 0.55))
+            .clamp(0.0, 1.0);
+        final scale = (1.3 - t * 0.9).clamp(0.1, 1.5);
+
+        return Positioned(
+          left: widget.x - 12 + dx,
+          top: widget.y - 12 + dy,
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: opacity,
+              child: Transform.scale(
+                scale: scale,
+                child: const Text('🔥', style: TextStyle(fontSize: 22)),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SOCIAL POSTS MARQUEE  —  variable-width tiles sized to each image's aspect ratio
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SocialPostsMarquee extends StatefulWidget {
+  const _SocialPostsMarquee();
+  @override
+  State<_SocialPostsMarquee> createState() => _SocialPostsMarqueeState();
+}
+
+class _SocialPostsMarqueeState extends State<_SocialPostsMarquee>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _ctrl;
+  bool _paused = false;
+  bool _loaded = false;
+
+  // Computed per-image tile widths (excluding gap) + total loop width.
+  final List<double> _tileWidths = [];
+  double _totalW = 0;
+
+  static const _tileH  = 150.0;
+  static const _gap    = 8.0;
+  static const _speed  = 44.0; // px / second
+
+  // 0-indexed posts that should display at square (1:1) dimensions.
+  static const _squarePosts = {3, 4, 5, 6}; // post4, post5, post6, post7
+
+  // Display order: interleave wide posts (1,2,3,8) with square posts (4,5,6,7).
+  // Values are 0-based post indices → post1=0, post4=3, post2=1, post5=4 …
+  static const _postOrder = [0, 3, 1, 4, 2, 5, 7, 6];
+
+  // Platform badges aligned to _postOrder display positions.
+  static const _platforms = [
+    'assets/YouTubeicon.png',    // post1 (wide)
+    'assets/Instagramicon.png',  // post4 (square)
+    'assets/Xicon.png',          // post2 (wide)
+    'assets/Facebookicon.png',   // post5 (square)
+    'assets/TikTokicon.png',     // post3 (wide)
+    'assets/YouTubeicon.png',    // post6 (square)
+    'assets/Xicon.png',          // post8 (wide)
+    'assets/TikTokicon.png',     // post7 (square)
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _measureImages();
+  }
+
+  // Resolve each asset through Flutter's image pipeline to get natural dimensions.
+  Future<void> _measureImages() async {
+    final sizes = await Future.wait(
+      List.generate(8, (i) => _resolveSize('assets/post${i + 1}.png')),
+    );
+    if (!mounted) return;
+
+    for (final idx in _postOrder) {
+      final s = sizes[idx];
+      final w = _squarePosts.contains(idx)
+          ? _tileH
+          : (s.width > 0 && s.height > 0)
+              ? _tileH * s.width / s.height
+              : _tileH;
+      _tileWidths.add(w);
+    }
+    _totalW = _tileWidths.fold(0, (sum, w) => sum + w + _gap);
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: (_totalW / _speed * 1000).round()),
+    )..repeat();
+
+    setState(() => _loaded = true);
+  }
+
+  Future<Size> _resolveSize(String asset) async {
+    final comp = Completer<Size>();
+    final stream = AssetImage(asset).resolve(ImageConfiguration.empty);
+    late ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (info, _) {
+        if (!comp.isCompleted) {
+          comp.complete(Size(
+            info.image.width.toDouble(),
+            info.image.height.toDouble(),
+          ));
+        }
+        stream.removeListener(listener);
+      },
+      onError: (_, _) {
+        if (!comp.isCompleted) comp.complete(const Size(_tileH, _tileH));
+        stream.removeListener(listener);
+      },
+    );
+    stream.addListener(listener);
+    return comp.future;
+  }
+
+  @override
+  void dispose() {
+    _ctrl?.dispose();
+    super.dispose();
+  }
+
+  void _togglePause() {
+    if (_ctrl == null) return;
+    HapticFeedback.selectionClick();
+    setState(() => _paused = !_paused);
+    _paused ? _ctrl!.stop() : _ctrl!.repeat();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show a fixed-height placeholder until image sizes are resolved.
+    if (!_loaded || _ctrl == null) {
+      return const SizedBox(height: _tileH);
+    }
+
+    return GestureDetector(
+      onTap: _togglePause,
+      behavior: HitTestBehavior.opaque,
+      child: Stack(
+        children: [
+          // ── Scrolling strip ──────────────────────────────────────────────
+          ClipRect(
+            child: SizedBox(
+              height: _tileH,
+              child: OverflowBox(
+                maxWidth: double.infinity,
+                alignment: Alignment.centerLeft,
+                child: AnimatedBuilder(
+                  animation: _ctrl!,
+                  builder: (_, child) => Transform.translate(
+                    offset: Offset(-_ctrl!.value * _totalW, 0),
+                    child: child,
+                  ),
+                  // Two copies side-by-side for seamless loop.
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...List.generate(8, _buildTile),
+                      ...List.generate(8, _buildTile),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // ── Pause overlay ────────────────────────────────────────────────
+          AnimatedOpacity(
+            opacity: _paused ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: Container(
+              height: _tileH,
+              color: Colors.black.withValues(alpha: 0.45),
+              child: const Center(
+                child: Icon(
+                  Icons.pause_circle_filled_rounded,
+                  color: Colors.white,
+                  size: 38,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTile(int i) {
+    final postNum = _postOrder[i] + 1; // 1-based filename
+    final tileW = _tileWidths[i];
+
+    return Container(
+      width: tileW,
+      height: _tileH,
+      margin: const EdgeInsets.only(right: _gap),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(sigmaX: 1.4, sigmaY: 1.4),
+              child: Image.asset(
+                'assets/post$postNum.png',
+                fit: BoxFit.cover,
+              ),
+            ),
+            // Bottom vignette for badge legibility
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: [0.45, 1.0],
+                  colors: [Color(0x00000000), Color(0xAA000000)],
+                ),
+              ),
+            ),
+            // Platform logo — bottom-left
+            Positioned(
+              bottom: 7,
+              left: 7,
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(6),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.22),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(3),
+                child: Image.asset(_platforms[i], fit: BoxFit.contain),
+              ),
+            ),
+            // FLAGGED chip — top-right
+            Positioned(
+              top: 7,
+              right: 7,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xD9EF4444),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: const Text(
+                  '⚠ FLAGGED',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 6,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CREDEXA+ AD — purple accent constant
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _kAdPurple = Color(0xFF9333EA);
+
+// Renders "Credexa" in [base] colour with a glowing purple "+".
+Widget _credexaPlusText({
+  double size = 28,
+  FontWeight weight = FontWeight.w900,
+  Color base = Colors.white,
+}) =>
+    RichText(
+      text: TextSpan(
+        style: TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: size,
+          fontWeight: weight,
+          color: base,
+        ),
+        children: [
+          const TextSpan(text: 'Credexa'),
+          TextSpan(
+            text: '+',
+            style: TextStyle(
+              color: _kAdPurple,
+              shadows: [Shadow(blurRadius: 14, color: _kAdPurple)],
+            ),
+          ),
+        ],
+      ),
+    );
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CREDEXA+ AD OVERLAY
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CredexaPlusAd extends StatefulWidget {
+  const _CredexaPlusAd({required this.onDismiss});
+  final VoidCallback onDismiss;
+
+  @override
+  State<_CredexaPlusAd> createState() => _CredexaPlusAdState();
+}
+
+class _CredexaPlusAdState extends State<_CredexaPlusAd>
+    with TickerProviderStateMixin {
+  late final AnimationController _enterCtrl;
+  late final AnimationController _shimmerCtrl;
+  late final AnimationController _pulseCtrl;
+  late final AnimationController _staggerCtrl;
+  late final AnimationController _floatCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _enterCtrl   = AnimationController(
+      duration: const Duration(milliseconds: 650),
+      reverseDuration: const Duration(milliseconds: 300),
+      vsync: this,
+    )..forward();
+    _shimmerCtrl = AnimationController(duration: const Duration(milliseconds: 1800), vsync: this)..repeat();
+    _pulseCtrl   = AnimationController(duration: const Duration(milliseconds: 1400), vsync: this)..repeat(reverse: true);
+    _staggerCtrl = AnimationController(duration: const Duration(milliseconds: 1000), vsync: this);
+    _floatCtrl   = AnimationController(duration: const Duration(milliseconds: 2600), vsync: this)..repeat(reverse: true);
+    Future.delayed(const Duration(milliseconds: 420), () {
+      if (mounted) _staggerCtrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _enterCtrl.dispose();
+    _shimmerCtrl.dispose();
+    _pulseCtrl.dispose();
+    _staggerCtrl.dispose();
+    _floatCtrl.dispose();
+    super.dispose();
+  }
+
+  // Dismiss (X or tap-outside) → haptic tap, then reverse the enter animation so
+  // the card fades + scales out before the parent removes it.
+  bool _dismissing = false;
+  Future<void> _handleDismiss() async {
+    if (_dismissing) return;
+    _dismissing = true;
+    HapticFeedback.lightImpact();
+    await _enterCtrl.reverse();
+    if (mounted) widget.onDismiss();
+  }
+
+  // ── Mini browser mockup ─────────────────────────────────────────────────────
+
+  Widget _buildBrowserMockup() {
+    return Container(
+      height: 96,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Column(
+          children: [
+            // Browser chrome bar
+            Container(
+              height: 22,
+              color: const Color(0xFF334155),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  for (final c in [const Color(0xFFEF4444), const Color(0xFFF59E0B), const Color(0xFF22C55E)])
+                    Container(
+                      width: 7, height: 7,
+                      margin: const EdgeInsets.only(right: 4),
+                      decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+                    ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Container(
+                      height: 13,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text(
+                        '🔒  twitter.com/home',
+                        style: TextStyle(fontFamily: 'Montserrat', fontSize: 6, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Page content
+            Expanded(
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(height: 5, width: double.infinity,
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(3))),
+                        const SizedBox(height: 4),
+                        Container(height: 4, width: 180,
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(3))),
+                        const SizedBox(height: 4),
+                        Container(height: 4, width: 140,
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(3))),
+                        const SizedBox(height: 6),
+                        // Credexa warning label
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.88),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.warning_rounded, color: Colors.white, size: 7),
+                              SizedBox(width: 3),
+                              Text('MISLEADING', style: TextStyle(fontFamily: 'Montserrat', fontSize: 6, fontWeight: FontWeight.w800, color: Colors.white)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Credexa+ badge — bottom right
+                  Positioned(
+                    right: 7, bottom: 7,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [_kAdPurple, Color(0xFF00BFFF)]),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('C+', style: TextStyle(fontFamily: 'Montserrat', fontSize: 8, fontWeight: FontWeight.w900, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Staggered feature pill ──────────────────────────────────────────────────
+
+  Widget _featurePill(IconData icon, String label, double staggerStart) {
+    // Expanded must be the direct Row child — keep it outside AnimatedBuilder.
+    return Expanded(
+      child: AnimatedBuilder(
+        animation: _staggerCtrl,
+        builder: (_, child) {
+          final t = Interval(staggerStart, (staggerStart + 0.45).clamp(0.0, 1.0), curve: Curves.easeOutBack)
+              .transform(_staggerCtrl.value);
+          return Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Transform.translate(offset: Offset(0, 14 * (1 - t)), child: child),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _kAdPurple.withValues(alpha: 0.38)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: _kAdPurple, size: 18),
+              const SizedBox(height: 4),
+              Text(label, style: const TextStyle(fontFamily: 'Montserrat', fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enterCurved = CurvedAnimation(parent: _enterCtrl, curve: Curves.easeOutBack, reverseCurve: Curves.easeInCubic);
+    final fadeCurved  = CurvedAnimation(parent: _enterCtrl, curve: Curves.easeIn);
+
+    return AnimatedBuilder(
+      animation: Listenable.merge([_enterCtrl, _shimmerCtrl, _pulseCtrl, _floatCtrl]),
+      builder: (_, __) {
+        final pulse   = _pulseCtrl.value;
+        final shimmer = _shimmerCtrl.value;
+        final float   = math.sin(_floatCtrl.value * math.pi) * 5.0;
+
+        return FadeTransition(
+          opacity: fadeCurved,
+          child: GestureDetector(
+            // tap outside card → dismiss
+            onTap: _handleDismiss,
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.68),
+              alignment: Alignment.center,
+              child: GestureDetector(
+                // block dismiss when touching the card itself
+                onTap: () {},
+                child: ScaleTransition(
+                  scale: enterCurved,
+                  child: Transform.translate(
+                    offset: Offset(0, float),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 22),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0D1225), Color(0xFF1A0D35), Color(0xFF0D1225)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(
+                          color: _kAdPurple.withValues(alpha: 0.30 + pulse * 0.22),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _kAdPurple.withValues(alpha: 0.28 + pulse * 0.14),
+                            blurRadius: 44 + pulse * 20,
+                            offset: const Offset(0, 8),
+                          ),
+                          BoxShadow(
+                            color: const Color(0xFF00BFFF).withValues(alpha: 0.08 + pulse * 0.06),
+                            blurRadius: 60,
+                            offset: const Offset(0, -12),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(27),
+                        child: Stack(
+                          children: [
+                            // ── Shimmer sweep across card ──────────────────────
+                            Positioned.fill(
+                              child: ShaderMask(
+                                shaderCallback: (rect) => LinearGradient(
+                                  begin: Alignment(-1.5 + shimmer * 4, -0.5),
+                                  end:   Alignment( shimmer * 4,        0.5),
+                                  colors: [
+                                    Colors.transparent,
+                                    Colors.white.withValues(alpha: 0.045),
+                                    Colors.transparent,
+                                  ],
+                                ).createShader(rect),
+                                child: Container(color: Colors.white),
+                              ),
+                            ),
+
+                            // ── Top tagline bar ────────────────────────────────
+                            Positioned(
+                              top: 0, left: 0, right: 0,
+                              child: Container(
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      _kAdPurple.withValues(alpha: 0.18),
+                                      const Color(0xFF00BFFF).withValues(alpha: 0.10),
+                                    ],
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    for (final word in ['Stay', 'Rooted', 'In', 'Reality'])
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                                        child: Text(
+                                          word,
+                                          style: TextStyle(
+                                            fontFamily: 'Montserrat',
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                            color: word == 'Reality'
+                                                ? _kAdPurple
+                                                : Colors.white.withValues(alpha: 0.45),
+                                            letterSpacing: 0.6,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            // ── Main card content ──────────────────────────────
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 40, 20, 22),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Badge + close button
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: _kAdPurple.withValues(alpha: 0.18),
+                                          borderRadius: BorderRadius.circular(100),
+                                          border: Border.all(color: _kAdPurple.withValues(alpha: 0.45)),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.extension_rounded, color: _kAdPurple, size: 10),
+                                            SizedBox(width: 4),
+                                            Text('CHROME EXTENSION',
+                                              style: TextStyle(fontFamily: 'Montserrat', fontSize: 8, fontWeight: FontWeight.w800, color: _kAdPurple, letterSpacing: 0.8)),
+                                          ],
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      GestureDetector(
+                                        onTap: _handleDismiss,
+                                        child: Container(
+                                          width: 28, height: 28,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.09),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(Icons.close_rounded,
+                                              color: Colors.white.withValues(alpha: 0.55), size: 16),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 14),
+
+                                  // Browser mockup illustration
+                                  _buildBrowserMockup(),
+                                  const SizedBox(height: 16),
+
+                                  // Hero headline
+                                  Text(
+                                    'Stay connected with',
+                                    style: TextStyle(fontFamily: 'Montserrat', fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.50)),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  _credexaPlusText(size: 30),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    'All in your browser',
+                                    style: TextStyle(fontFamily: 'Montserrat', fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white.withValues(alpha: 0.65)),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Real-time misinformation detector\nfor social media posts in Chrome.',
+                                    style: TextStyle(fontFamily: 'Montserrat', fontSize: 11, color: Colors.white.withValues(alpha: 0.40), height: 1.5),
+                                  ),
+                                  const SizedBox(height: 16),
+
+                                  // Feature pills — staggered entrance
+                                  Row(
+                                    children: [
+                                      _featurePill(Icons.lock_outline_rounded,  'Secure',   0.00),
+                                      const SizedBox(width: 8),
+                                      _featurePill(Icons.bolt_rounded,           'Fast',     0.18),
+                                      const SizedBox(width: 8),
+                                      _featurePill(Icons.gps_fixed_rounded,      'Accurate', 0.36),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 16),
+
+                                  // Pulsing CTA button
+                                  Container(
+                                    width: double.infinity,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          _kAdPurple,
+                                          Color.lerp(_kAdPurple, const Color(0xFF00BFFF), 0.45 + pulse * 0.22)!,
+                                        ],
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(14),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: _kAdPurple.withValues(alpha: 0.38 + pulse * 0.20),
+                                          blurRadius: 18 + pulse * 10,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(14),
+                                        onTap: () => launchUrl(
+                                          Uri.parse('https://chromewebstore.google.com/detail/abflkecbafbaojegnhpdcdlkcmpdemgd?utm_source=item-share-cb'),
+                                          mode: LaunchMode.externalApplication,
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Text('Get ',
+                                              style: TextStyle(fontFamily: 'Montserrat', fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+                                            _credexaPlusText(size: 15),
+                                            const Text('  Free',
+                                              style: TextStyle(fontFamily: 'Montserrat', fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+                                            const SizedBox(width: 8),
+                                            const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Center(
+                                    child: Text(
+                                      'Available on the Chrome Web Store',
+                                      style: TextStyle(fontFamily: 'Montserrat', fontSize: 9, color: Colors.white.withValues(alpha: 0.28)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

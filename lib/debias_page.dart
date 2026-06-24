@@ -9,12 +9,11 @@ import 'services/debias_service.dart';
 import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
 import 'services/shared_content_router.dart';
+import 'services/user_progress_service.dart';
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 const _kPrimary    = Color(0xFF1E293B);
-const _kSecondary  = Color(0xFF64748B);
 const _kAccent     = Color(0xFF22C55E);
-const _kBackground = Color(0xFFF1F5F9);
 
 TextStyle _m({
   required double size,
@@ -209,11 +208,13 @@ class _DebiasPageState extends State<DebiasPage> {
   }
 
   Widget _buildNavbar() {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 280),
       height: 64,
       decoration: BoxDecoration(
-        color: _scrolled ? Colors.white : _kBackground,
+        color: _scrolled ? cs.surface : bgColor,
         border: _scrolled
             ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
             : null,
@@ -291,6 +292,8 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
   String? _error;
   DebiasResult? _result;
   late final AnimationController _resultsCtrl;
+  int?  _userPredictionScore;  // 1-100 slider value, set before result arrives
+  bool? _predictionCorrect;
 
   Uint8List? _imageBytes;
   String _imageMimeType = 'image/jpeg';
@@ -410,14 +413,30 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
     });
   }
 
-  void _clearImage() => setState(() { _imageBytes = null; _imageName = null; _showResults = false; });
+  void _clearImage() => setState(() {
+    _imageBytes = null;
+    _imageName = null;
+    _showResults = false;
+    _userPredictionScore = null;
+    _predictionCorrect = null;
+  });
 
   Future<void> _rewrite() async {
     final text = _textCtrl.text.trim();
     final hasImage = _imageBytes != null;
     if (text.isEmpty && !hasImage) return;
+    if (text.length > 4000) {
+      setState(() => _error = 'Text is too long. Please shorten it to under 4,000 characters.');
+      return;
+    }
 
-    setState(() { _rewriting = true; _showResults = false; _error = null; });
+    setState(() {
+      _rewriting = true;
+      _showResults = false;
+      _error = null;
+      _userPredictionScore = null;
+      _predictionCorrect = null;
+    });
     _resultsCtrl.reset();
 
     try {
@@ -431,8 +450,25 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
         result = await DebiasService.debiasText(text);
       }
       if (!mounted) return;
-      setState(() { _rewriting = false; _showResults = true; _result = result; });
+      bool? correct;
+      if (_userPredictionScore != null) {
+        correct = await UserProgressService.recordDebiasPrediction(
+            _userPredictionScore!, result.biasScore);
+      }
+      setState(() {
+        _rewriting = false;
+        _showResults = true;
+        _result = result;
+        _predictionCorrect = correct;
+      });
       _resultsCtrl.forward();
+      HapticFeedback.mediumImpact();
+      await Future.delayed(const Duration(milliseconds: 70));
+      if (!mounted) return;
+      HapticFeedback.mediumImpact();
+      await Future.delayed(const Duration(milliseconds: 45));
+      if (!mounted) return;
+      HapticFeedback.heavyImpact();
       ProfileService.incrementDebias();
     } catch (e) {
       if (!mounted) return;
@@ -451,13 +487,17 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
       _showResults = false;
       _error = null;
       _result = null;
+      _userPredictionScore = null;
+      _predictionCorrect = null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return Container(
-      color: _kBackground,
+      color: bgColor,
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -465,11 +505,11 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
           _Label(text: 'CREDEXA · DE-BIAS TOOL'),
           const SizedBox(height: 8),
           Text('Rewrite in\nNeutral Tone',
-              style: _m(size: 32, weight: FontWeight.w900, height: 1.1)),
+              style: _m(size: 32, weight: FontWeight.w900, height: 1.1, color: cs.onSurface)),
           const SizedBox(height: 8),
           Text(
             'Paste any text or share a screenshot. GPT rewrites it in balanced language and shows you exactly what bias techniques were used — from three different perspectives.',
-            style: _m(size: 14, weight: FontWeight.w500, color: _kSecondary, height: 1.65),
+            style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.65),
           ),
           const SizedBox(height: 24),
 
@@ -488,11 +528,34 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
           ),
           const SizedBox(height: 16),
 
+          // ── Prediction prompt (shown while AI is thinking) ─────────────────
+          if (_rewriting) ...[
+            const SizedBox(height: 4),
+            if (_userPredictionScore == null)
+              _DebiasPredictionPrompt(
+                onPrediction: (score) => setState(() => _userPredictionScore = score),
+              )
+            else
+              _DebiasPredictionLocked(score: _userPredictionScore!),
+            const SizedBox(height: 16),
+          ],
+
+          // ── Prediction result chip ─────────────────────────────────────────
+          if (_showResults && _predictionCorrect != null) ...[
+            const SizedBox(height: 4),
+            _DebiasPredictionResultChip(
+              correct:   _predictionCorrect!,
+              userScore: _userPredictionScore!,
+              aiScore:   _result!.biasScore,
+            ),
+            const SizedBox(height: 12),
+          ],
+
           if (_error != null) ...[
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF5F5),
+                color: cs.surface,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: const Color(0xFFFECACA)),
               ),
@@ -512,7 +575,7 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
 
           if (!_showResults && !_rewriting) ...[
             Text('Try an example:',
-                style: _m(size: 12, weight: FontWeight.w700, color: _kSecondary)),
+                style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -568,19 +631,20 @@ class _ExampleChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: () { HapticFeedback.lightImpact(); onTap(); },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: cs.surface,
           borderRadius: BorderRadius.circular(100),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: cs.outlineVariant),
           boxShadow: [
             BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))
           ],
         ),
-        child: Text(label, style: _m(size: 12, weight: FontWeight.w600, color: _kSecondary)),
+        child: Text(label, style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
       ),
     );
   }
@@ -613,9 +677,11 @@ class _InputCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cs.surface,
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(color: Colors.black.withValues(alpha: 0.07), blurRadius: 24, offset: const Offset(0, 8)),
@@ -638,7 +704,7 @@ class _InputCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text('Paste Text or Share a Screenshot',
-                    style: _m(size: 13, weight: FontWeight.w800)),
+                    style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
               ],
             ),
             const SizedBox(height: 14),
@@ -647,9 +713,9 @@ class _InputCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: _kBackground,
+                  color: bgColor,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: cs.outlineVariant),
                 ),
                 child: Row(
                   children: [
@@ -663,11 +729,11 @@ class _InputCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(imageName ?? 'Image',
-                              style: _m(size: 12, weight: FontWeight.w700),
+                              style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface),
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                           const SizedBox(height: 2),
                           Text('GPT will extract text & de-bias it',
-                              style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary)),
+                              style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
                         ],
                       ),
                     ),
@@ -693,12 +759,12 @@ class _InputCard extends StatelessWidget {
                 controller: textCtrl,
                 maxLines: 5,
                 onChanged: (_) => onChanged(),
-                style: _m(size: 14, weight: FontWeight.w500, height: 1.65),
+                style: _m(size: 14, weight: FontWeight.w500, height: 1.65, color: cs.onSurface),
                 decoration: InputDecoration(
                   hintText: 'Paste a headline, social post, or paragraph with loaded or emotional language…',
-                  hintStyle: _m(size: 13, weight: FontWeight.w500, color: const Color(0xFFCBD5E1), height: 1.6),
+                  hintStyle: _m(size: 13, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.45), height: 1.6),
                   filled: true,
-                  fillColor: _kBackground,
+                  fillColor: bgColor,
                   contentPadding: const EdgeInsets.all(16),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
                   focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _kAccent, width: 2)),
@@ -812,25 +878,28 @@ class _ResultsPanel extends StatelessWidget {
         const SizedBox(height: 16),
 
         if (result.extractedText != null && result.extractedText!.isNotEmpty) ...[
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFBFDBFE)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('📷', style: TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Text extracted from image: "${result.extractedText}"',
-                      style: _m(size: 12, weight: FontWeight.w500, color: const Color(0xFF1E40AF), height: 1.5)),
-                ),
-              ],
-            ),
-          ),
+          Builder(builder: (context) {
+            final cs = Theme.of(context).colorScheme;
+            return Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('📷', style: TextStyle(fontSize: 14)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Text extracted from image: "${result.extractedText}"',
+                        style: _m(size: 12, weight: FontWeight.w500, color: const Color(0xFF1E40AF), height: 1.5)),
+                  ),
+                ],
+              ),
+            );
+          }),
           const SizedBox(height: 12),
         ],
 
@@ -843,15 +912,7 @@ class _ResultsPanel extends StatelessWidget {
           text: result.originalText,
         ),
         const SizedBox(height: 12),
-        _TextCompareCard(
-          label: 'NEUTRAL REWRITE',
-          labelColor: _kAccent,
-          bgColor: const Color(0xFFF0FDF4),
-          borderColor: const Color(0xFFBBF7D0),
-          icon: '✅',
-          text: result.neutralText,
-          showCopy: true,
-        ),
+        _ShimmerNeutralCard(text: result.neutralText),
         const SizedBox(height: 20),
 
         // ── Feature #2: Three Perspectives ──
@@ -862,86 +923,92 @@ class _ResultsPanel extends StatelessWidget {
 
         // ── Feature #3: What Changed (with tappable glossary) ──
         if (result.changes.isNotEmpty) ...[
-          Container(
-            padding: const EdgeInsets.all(20),
+          Builder(builder: (context) {
+            final cs = Theme.of(context).colorScheme;
+            return Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6))],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(
+                          color: _kAccent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Center(child: Text('🔍', style: TextStyle(fontSize: 17))),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('What We Changed', style: _m(size: 15, weight: FontWeight.w900, color: cs.onSurface)),
+                            Text(
+                              '${result.changes.length} bias pattern${result.changes.length == 1 ? '' : 's'} removed  •  tap any to learn more',
+                              style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55)),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  ...result.changes.asMap().entries.map((e) => Padding(
+                        padding: EdgeInsets.only(bottom: e.key < result.changes.length - 1 ? 14 : 0),
+                        child: _ChangeRow(item: e.value),
+                      )),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 16),
+        ],
+
+        Builder(builder: (context) {
+          final cs = Theme.of(context).colorScheme;
+          return Container(
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6))],
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: cs.outlineVariant),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 36, height: 36,
-                      decoration: BoxDecoration(
-                        color: _kAccent.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Center(child: Text('🔍', style: TextStyle(fontSize: 17))),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
+                Text('Why This Matters', style: _m(size: 13, weight: FontWeight.w900, color: cs.onSurface)),
+                const SizedBox(height: 12),
+                ...[
+                  ('🧠', 'Emotional words activate your brain\'s fear response before you can think critically.'),
+                  ('⚖️', 'Neutral language gives you the facts — and lets you form your own opinion.'),
+                  ('🔄', 'Practice spotting loaded language in everything you read, watch, and share.'),
+                ].map((t) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('What We Changed', style: _m(size: 15, weight: FontWeight.w900)),
-                          Text(
-                            '${result.changes.length} bias pattern${result.changes.length == 1 ? '' : 's'} removed  •  tap any to learn more',
-                            style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary),
-                            overflow: TextOverflow.ellipsis,
+                          Text(t.$1, style: const TextStyle(fontSize: 14)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(t.$2,
+                                style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.55)),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                ...result.changes.asMap().entries.map((e) => Padding(
-                      padding: EdgeInsets.only(bottom: e.key < result.changes.length - 1 ? 14 : 0),
-                      child: _ChangeRow(item: e.value),
                     )),
               ],
             ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Why This Matters', style: _m(size: 13, weight: FontWeight.w900)),
-              const SizedBox(height: 12),
-              ...[
-                ('🧠', 'Emotional words activate your brain\'s fear response before you can think critically.'),
-                ('⚖️', 'Neutral language gives you the facts — and lets you form your own opinion.'),
-                ('🔄', 'Practice spotting loaded language in everything you read, watch, and share.'),
-              ].map((t) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(t.$1, style: const TextStyle(fontSize: 14)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(t.$2,
-                              style: _m(size: 12, weight: FontWeight.w500, color: _kSecondary, height: 1.55)),
-                        ),
-                      ],
-                    ),
-                  )),
-            ],
-          ),
-        ),
+          );
+        }),
         const SizedBox(height: 16),
       ],
     );
@@ -963,11 +1030,13 @@ class _BiasMeter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final fraction = (score / 100).clamp(0.0, 1.0);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cs.surface,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 5))],
       ),
@@ -980,7 +1049,7 @@ class _BiasMeter extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Bias Score', style: _m(size: 12, weight: FontWeight.w700, color: _kSecondary)),
+                    Text('Bias Score', style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
                     const SizedBox(height: 2),
                     Text(label, style: _m(size: 18, weight: FontWeight.w900, color: _color)),
                   ],
@@ -999,7 +1068,7 @@ class _BiasMeter extends StatelessWidget {
             child: LinearProgressIndicator(
               value: fraction,
               minHeight: 8,
-              backgroundColor: _kBackground,
+              backgroundColor: bgColor,
               valueColor: AlwaysStoppedAnimation<Color>(_color),
             ),
           ),
@@ -1007,8 +1076,8 @@ class _BiasMeter extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Neutral', style: _m(size: 10, weight: FontWeight.w600, color: _kSecondary)),
-              Text('Manipulative', style: _m(size: 10, weight: FontWeight.w600, color: _kSecondary)),
+              Text('Neutral', style: _m(size: 10, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+              Text('Manipulative', style: _m(size: 10, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
             ],
           ),
         ],
@@ -1045,13 +1114,15 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final persp = _perspectives[_selected];
     final color = _colors[_selected];
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cs.surface,
         borderRadius: BorderRadius.circular(24),
         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6))],
       ),
@@ -1072,8 +1143,8 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Three Perspectives', style: _m(size: 15, weight: FontWeight.w900)),
-                  Text('Same story — different framings', style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary)),
+                  Text('Three Perspectives', style: _m(size: 15, weight: FontWeight.w900, color: cs.onSurface)),
+                  Text('Same story — different framings', style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
                 ],
               ),
             ],
@@ -1083,7 +1154,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
           // Tab selector
           Container(
             decoration: BoxDecoration(
-              color: _kBackground,
+              color: bgColor,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -1108,7 +1179,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                         textAlign: TextAlign.center,
                         style: _m(
                           size: 12, weight: FontWeight.w800,
-                          color: selected ? Colors.white : _kSecondary,
+                          color: selected ? Colors.white : cs.onSurface.withValues(alpha: 0.55),
                         ),
                       ),
                     ),
@@ -1145,7 +1216,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                   ),
                   const SizedBox(height: 10),
                   Text(persp.text,
-                      style: _m(size: 13, weight: FontWeight.w500, color: _kPrimary, height: 1.7)),
+                      style: _m(size: 13, weight: FontWeight.w500, color: cs.onSurface, height: 1.7)),
                   const SizedBox(height: 10),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1154,7 +1225,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                       const SizedBox(width: 5),
                       Expanded(
                         child: Text(persp.note,
-                            style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary, height: 1.4)),
+                            style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.4)),
                       ),
                     ],
                   ),
@@ -1167,7 +1238,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
           Container(
             padding: const EdgeInsets.all(11),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB),
+              color: cs.surface,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: const Color(0xFFFDE68A)),
             ),
@@ -1200,11 +1271,9 @@ class _TextCompareCard extends StatelessWidget {
     required this.borderColor,
     required this.icon,
     required this.text,
-    this.showCopy = false,
   });
   final String label, icon, text;
   final Color labelColor, bgColor, borderColor;
-  final bool showCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -1222,41 +1291,21 @@ class _TextCompareCard extends StatelessWidget {
             children: [
               Text(icon, style: const TextStyle(fontSize: 14)),
               const SizedBox(width: 7),
-              Expanded(
-                child: Text(label,
-                    style: _m(size: 10, weight: FontWeight.w800, color: labelColor, spacing: 1.0)),
-              ),
-              if (showCopy)
-                GestureDetector(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: text));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Neutral rewrite copied!'),
-                        duration: Duration(seconds: 2),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _kAccent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.copy_rounded, size: 12, color: _kAccent),
-                        const SizedBox(width: 4),
-                        Text('Copy', style: _m(size: 11, weight: FontWeight.w700, color: _kAccent)),
-                      ],
-                    ),
-                  ),
-                ),
+              Text(label,
+                  style: _m(
+                      size: 10,
+                      weight: FontWeight.w800,
+                      color: labelColor,
+                      spacing: 1.0)),
             ],
           ),
           const SizedBox(height: 10),
-          Text(text, style: _m(size: 13, weight: FontWeight.w500, color: _kPrimary, height: 1.7)),
+          Text(text,
+              style: _m(
+                  size: 13,
+                  weight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  height: 1.7)),
         ],
       ),
     );
@@ -1280,11 +1329,13 @@ class _ChangeRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final hasGlossary = _glossary.containsKey(item.type);
 
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: _kBackground, borderRadius: BorderRadius.circular(14)),
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(14)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1295,7 +1346,7 @@ class _ChangeRow extends StatelessWidget {
                 Text(item.icon, style: const TextStyle(fontSize: 14)),
                 const SizedBox(width: 7),
                 Expanded(
-                  child: Text(item.type, style: _m(size: 12, weight: FontWeight.w800, color: _kPrimary)),
+                  child: Text(item.type, style: _m(size: 12, weight: FontWeight.w800, color: cs.onSurface)),
                 ),
                 if (hasGlossary) ...[
                   Container(
@@ -1318,7 +1369,7 @@ class _ChangeRow extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(item.explanation, style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary, height: 1.5)),
+          Text(item.explanation, style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
           const SizedBox(height: 10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1332,7 +1383,7 @@ class _ChangeRow extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(item.original,
-                    style: _m(size: 12, weight: FontWeight.w500, color: _kSecondary, height: 1.5)),
+                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
               ),
             ],
           ),
@@ -1349,7 +1400,7 @@ class _ChangeRow extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(item.rewritten,
-                    style: _m(size: 12, weight: FontWeight.w500, color: _kPrimary, height: 1.5)),
+                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface, height: 1.5)),
               ),
             ],
           ),
@@ -1367,10 +1418,11 @@ class _GlossarySheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1381,7 +1433,7 @@ class _GlossarySheet extends StatelessWidget {
             child: Container(
               width: 40, height: 4,
               decoration: BoxDecoration(
-                color: const Color(0xFFE2E8F0),
+                color: cs.outlineVariant,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -1393,7 +1445,7 @@ class _GlossarySheet extends StatelessWidget {
                   ? Center(child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text('No glossary entry for "$biasType" yet.',
-                          style: _m(size: 14, weight: FontWeight.w500, color: _kSecondary)),
+                          style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
                     ))
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1404,7 +1456,7 @@ class _GlossarySheet extends StatelessWidget {
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(biasType,
-                                  style: _m(size: 20, weight: FontWeight.w900)),
+                                  style: _m(size: 20, weight: FontWeight.w900, color: cs.onSurface)),
                             ),
                           ],
                         ),
@@ -1413,28 +1465,28 @@ class _GlossarySheet extends StatelessWidget {
                           icon: '📖',
                           title: 'What is it?',
                           text: entry!.definition,
-                          bgColor: const Color(0xFFF8FAFC),
+                          bgColor: cs.surface,
                         ),
                         const SizedBox(height: 12),
                         _GlossarySection(
                           icon: '🧠',
                           title: 'Why does it work on your brain?',
                           text: entry!.psychology,
-                          bgColor: const Color(0xFFF0FDF4),
+                          bgColor: cs.surface,
                         ),
                         const SizedBox(height: 12),
                         _GlossarySection(
                           icon: '📰',
                           title: 'Real-world example',
                           text: entry!.example,
-                          bgColor: const Color(0xFFFFFBEB),
+                          bgColor: cs.surface,
                         ),
                         const SizedBox(height: 12),
                         _GlossarySection(
                           icon: '🔎',
                           title: 'How to spot it',
                           text: entry!.howToSpot,
-                          bgColor: const Color(0xFFEFF6FF),
+                          bgColor: cs.surface,
                         ),
                       ],
                     ),
@@ -1473,9 +1525,9 @@ class _GlossarySection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: _m(size: 12, weight: FontWeight.w800)),
+                Text(title, style: _m(size: 12, weight: FontWeight.w800, color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 5),
-                Text(text, style: _m(size: 13, weight: FontWeight.w500, color: _kSecondary, height: 1.6)),
+                Text(text, style: _m(size: 13, weight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55), height: 1.6)),
               ],
             ),
           ),
@@ -1492,12 +1544,13 @@ class _TipCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFFBEB),
+          color: cs.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFFDE68A)),
         ),
@@ -1509,12 +1562,505 @@ class _TipCard extends StatelessWidget {
               child: Text(
                 hasResults
                     ? 'Try editing the text above and rewriting again — see how even small word choices shift the tone and perspective.'
-                    : 'You can also screenshot a biased post and use the Camera or Gallery button — GPT will extract the text and de-bias it automatically.',
+                    : 'You can also screenshot a biased post and use the Camera or Gallery button.',
                 style: _m(size: 12, weight: FontWeight.w600, color: const Color(0xFF92400E), height: 1.55),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DE-BIAS PREDICTION WIDGETS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Slider prompt ─────────────────────────────────────────────────────────────
+class _DebiasPredictionPrompt extends StatefulWidget {
+  const _DebiasPredictionPrompt({required this.onPrediction});
+  final void Function(int) onPrediction;
+  @override
+  State<_DebiasPredictionPrompt> createState() =>
+      _DebiasPredictionPromptState();
+}
+
+class _DebiasPredictionPromptState extends State<_DebiasPredictionPrompt> {
+  double _value = 50;
+
+  static String _label(double v) {
+    if (v <= 20) return 'Mostly Neutral';
+    if (v <= 50) return 'Mildly Manipulative';
+    if (v <= 80) return 'Clearly Manipulative';
+    return 'Highly Manipulative';
+  }
+
+  static Color _color(double v) {
+    if (v <= 20) return _kAccent;
+    if (v <= 50) return const Color(0xFFF59E0B);
+    if (v <= 80) return const Color(0xFFEF4444);
+    return const Color(0xFFDC2626);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = _color(_value);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 3)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Text('🎚️', style: TextStyle(fontSize: 16)),
+            const SizedBox(width: 8),
+            Text('Before the AI responds…',
+                style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
+          ]),
+          const SizedBox(height: 6),
+          Text('How manipulative do you think this text is?',
+              style: _m(
+                  size: 12,
+                  weight: FontWeight.w500,
+                  color: cs.onSurface.withValues(alpha: 0.55),
+                  height: 1.4)),
+          const SizedBox(height: 14),
+          Row(children: [
+            Text(
+              '${_value.round()}',
+              style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  color: color),
+            ),
+            const SizedBox(width: 8),
+            Text('/100',
+                style: _m(size: 13, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(_label(_value),
+                  style: _m(size: 11, weight: FontWeight.w700, color: color)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 6,
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 10),
+              overlayShape:
+                  const RoundSliderOverlayShape(overlayRadius: 18),
+              activeTrackColor: color,
+              inactiveTrackColor: color.withValues(alpha: 0.18),
+              thumbColor: color,
+              overlayColor: color.withValues(alpha: 0.14),
+            ),
+            child: Slider(
+              value: _value,
+              min: 1,
+              max: 100,
+              onChanged: (v) {
+                if ((v.round() - _value.round()).abs() >= 3) {
+                  HapticFeedback.selectionClick();
+                }
+                setState(() => _value = v);
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Neutral',
+                    style:
+                        _m(size: 9, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+                Text('Highly Manipulative',
+                    style:
+                        _m(size: 9, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              widget.onPrediction(_value.round());
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text('Lock In My Prediction',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: Text('Helps track your critical-thinking growth',
+                style:
+                    _m(size: 10, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Locked state ──────────────────────────────────────────────────────────────
+class _DebiasPredictionLocked extends StatelessWidget {
+  const _DebiasPredictionLocked({required this.score});
+  final int score;
+
+  static Color _color(int v) {
+    if (v <= 20) return _kAccent;
+    if (v <= 50) return const Color(0xFFF59E0B);
+    if (v <= 80) return const Color(0xFFEF4444);
+    return const Color(0xFFDC2626);
+  }
+
+  static String _label(int v) {
+    if (v <= 20) return 'Mostly Neutral';
+    if (v <= 50) return 'Mildly Manipulative';
+    if (v <= 80) return 'Clearly Manipulative';
+    return 'Highly Manipulative';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color(score);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Text('🎚️', style: TextStyle(fontSize: 16)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Your prediction: $score/100 — ${_label(score)} — waiting for AI…',
+              style: _m(size: 12, weight: FontWeight.w600, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Result chip with visual score comparison ──────────────────────────────────
+class _DebiasPredictionResultChip extends StatelessWidget {
+  const _DebiasPredictionResultChip({
+    required this.correct,
+    required this.userScore,
+    required this.aiScore,
+  });
+  final bool correct;
+  final int userScore;
+  final int aiScore;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final accentColor =
+        correct ? _kAccent : const Color(0xFFF59E0B);
+    final diff = (userScore - aiScore).abs();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accentColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(correct ? '🎉' : '💡',
+                  style: const TextStyle(fontSize: 18)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  correct
+                      ? 'Spot on! You nailed the category.'
+                      : 'Learning moment — see where you landed.',
+                  style: _m(
+                      size: 13,
+                      weight: FontWeight.w800,
+                      color: accentColor),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // ── Score comparison bar ──
+          LayoutBuilder(builder: (_, box) {
+            final w         = box.maxWidth;
+            final userFrac  = (userScore / 100).clamp(0.0, 1.0);
+            final aiFrac    = (aiScore   / 100).clamp(0.0, 1.0);
+            final lo        = userFrac < aiFrac ? userFrac : aiFrac;
+            final rangeW    = ((userFrac - aiFrac).abs() * w).clamp(2.0, w);
+            return SizedBox(
+              height: 24,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Track
+                  Positioned(
+                    top: 10, left: 0, right: 0,
+                    child: Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  // Range fill
+                  Positioned(
+                    top: 10,
+                    left: lo * w,
+                    width: rangeW,
+                    child: Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: accentColor.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  // AI dot (indigo)
+                  Positioned(
+                    top: 6,
+                    left: (aiFrac * w - 6).clamp(0.0, w - 12),
+                    child: Container(
+                      width: 12, height: 12,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6366F1),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                    ),
+                  ),
+                  // User dot
+                  Positioned(
+                    top: 4,
+                    left: (userFrac * w - 8).clamp(0.0, w - 16),
+                    child: Container(
+                      width: 16, height: 16,
+                      decoration: BoxDecoration(
+                        color: accentColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                              color: accentColor.withValues(alpha: 0.4),
+                              blurRadius: 4)
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Container(width: 8, height: 8,
+                  decoration: const BoxDecoration(
+                      color: Color(0xFF6366F1), shape: BoxShape.circle)),
+              const SizedBox(width: 4),
+              Text('AI: $aiScore/100',
+                  style: _m(size: 10, weight: FontWeight.w700,
+                      color: const Color(0xFF6366F1))),
+              const SizedBox(width: 12),
+              Container(width: 8, height: 8,
+                  decoration: BoxDecoration(
+                      color: accentColor, shape: BoxShape.circle)),
+              const SizedBox(width: 4),
+              Text('You: $userScore/100',
+                  style: _m(size: 10, weight: FontWeight.w700,
+                      color: accentColor)),
+              const Spacer(),
+              Text('$diff pts apart',
+                  style: _m(size: 10, weight: FontWeight.w600,
+                      color: cs.onSurface.withValues(alpha: 0.55))),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            correct
+                ? 'Your guess landed in the same manipulation range as the AI.'
+                : 'Check the "What Changed" section to see what the AI caught.',
+            style: _m(
+                size: 11,
+                weight: FontWeight.w500,
+                color: correct
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFF92400E),
+                height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SHIMMER DISSOLVE — neutral rewrite text fades word-by-word from red → dark
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ShimmerNeutralCard extends StatefulWidget {
+  const _ShimmerNeutralCard({required this.text});
+  final String text;
+
+  @override
+  State<_ShimmerNeutralCard> createState() => _ShimmerNeutralCardState();
+}
+
+class _ShimmerNeutralCardState extends State<_ShimmerNeutralCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final words = widget.text.split(' ');
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFBBF7D0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('✅', style: TextStyle(fontSize: 14)),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text('NEUTRAL REWRITE',
+                    style: _m(
+                        size: 10,
+                        weight: FontWeight.w800,
+                        color: _kAccent,
+                        spacing: 1.0)),
+              ),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: widget.text));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Neutral rewrite copied!'),
+                      duration: Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _kAccent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.copy_rounded,
+                          size: 12, color: _kAccent),
+                      const SizedBox(width: 4),
+                      Text('Copy',
+                          style: _m(
+                              size: 11,
+                              weight: FontWeight.w700,
+                              color: _kAccent)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, _) {
+              return RichText(
+                text: TextSpan(
+                  children: words.asMap().entries.map((e) {
+                    final i        = e.key;
+                    final word     = e.value;
+                    // Stagger: first word starts immediately, last at t=0.6
+                    final delay    = (i / words.length) * 0.6;
+                    final progress =
+                        ((_ctrl.value - delay) / 0.4).clamp(0.0, 1.0);
+                    final curved   = Curves.easeOut.transform(progress);
+                    final color    = Color.lerp(
+                      const Color(0xFFEF4444), // start: biased-red
+                      cs.onSurface,            // end: theme-aware neutral
+                      curved,
+                    )!;
+                    return TextSpan(
+                      text: i < words.length - 1 ? '$word ' : word,
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize:   13,
+                        fontWeight: FontWeight.w500,
+                        color:      color,
+                        height:     1.7,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

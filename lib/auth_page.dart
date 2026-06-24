@@ -169,7 +169,7 @@ class _AuthPageState extends State<AuthPage>
                       borderRadius: BorderRadius.circular(28),
                       boxShadow: [
                         BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
+                            color: Colors.black.withValues(alpha: 0.08),
                             blurRadius: 28,
                             offset: const Offset(0, 10)),
                       ],
@@ -374,7 +374,7 @@ class _AuthPageState extends State<AuthPage>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                 decoration: BoxDecoration(
-                  color: _kAccent.withOpacity(0.08),
+                  color: _kAccent.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(100),
                 ),
                 child: Text(
@@ -485,7 +485,7 @@ class _PrimaryButton extends StatelessWidget {
               ? []
               : [
                   BoxShadow(
-                      color: _kAccent.withOpacity(0.35),
+                      color: _kAccent.withValues(alpha: 0.35),
                       blurRadius: 16,
                       offset: const Offset(0, 6))
                 ],
@@ -542,7 +542,7 @@ class _SocialButton extends StatelessWidget {
           border: Border.all(color: border),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 8,
                 offset: const Offset(0, 2))
           ],

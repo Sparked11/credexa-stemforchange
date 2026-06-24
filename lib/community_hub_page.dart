@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -26,10 +27,7 @@ TextStyle _m({
       letterSpacing: spacing,
     );
 
-const _kPrimary    = Color(0xFF1E293B);
-const _kSecondary  = Color(0xFF64748B);
 const _kAccent     = Color(0xFF22C55E);
-const _kBackground = Color(0xFFF1F5F9);
 const _kReplyColor = Color(0xFF3B82F6);
 const _kAiColor    = Color(0xFF6366F1);
 
@@ -72,11 +70,13 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     _sub = CommunityService.messagesStream().listen(
       (msgs) {
         if (!mounted) return;
+        // With reverse:true the list always starts anchored at the newest
+        // message (pixel 0). Only auto-scroll when the user is already there.
         final wasAtBottom = _isAtBottom();
         setState(() { _messages = msgs; _error = null; });
         if (wasAtBottom) {
           WidgetsBinding.instance
-              .addPostFrameCallback((_) => _scrollToBottom(animate: true));
+              .addPostFrameCallback((_) => _scrollToNewest(animate: true));
         }
       },
       onError: (_) {
@@ -86,21 +86,22 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     );
   }
 
+  // With reverse:true, pixel 0 IS the newest message end.
   bool _isAtBottom() {
     if (!_scroll.hasClients) return true;
-    return _scroll.position.pixels >= _scroll.position.maxScrollExtent - 80;
+    return _scroll.position.pixels <= 80;
   }
 
-  void _scrollToBottom({bool animate = false}) {
+  void _scrollToNewest({bool animate = false}) {
     if (!_scroll.hasClients) return;
     if (animate) {
       _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
+        0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
       );
     } else {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      _scroll.jumpTo(0);
     }
   }
 
@@ -127,7 +128,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     if (bytes.length > 360 * 1024) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Image is too large. Please choose a smaller image.'),
+          content: Text('Image is too large (max 360 KB). Please choose a smaller image.'),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red,
         ));
@@ -219,7 +220,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       _pendingMimeType   = null;
     });
     WidgetsBinding.instance
-        .addPostFrameCallback((_) => _scrollToBottom(animate: true));
+        .addPostFrameCallback((_) => _scrollToNewest(animate: true));
 
     try {
       if (_isAskMode) {
@@ -265,8 +266,10 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 
   // ── Navbar ──────────────────────────────────────────────────────────────────
   Widget _buildNavbar() {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return Container(
-      color:   _kBackground,
+      color:   bgColor,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
       child: Row(
         children: [
@@ -283,10 +286,13 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Community Hub', style: _m(size: 16, weight: FontWeight.w900)),
+                Text('Community Hub',
+                    style: _m(size: 16, weight: FontWeight.w900,
+                        color: cs.onSurface)),
                 Text(
                   '${_messages.length}/50 messages · completely anonymous',
-                  style: _m(size: 11, weight: FontWeight.w500, color: _kSecondary),
+                  style: _m(size: 11, weight: FontWeight.w500,
+                      color: cs.onSurface.withValues(alpha: 0.55)),
                 ),
               ],
             ),
@@ -299,6 +305,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 
   // ── Body ────────────────────────────────────────────────────────────────────
   Widget _buildBody() {
+    final cs = Theme.of(context).colorScheme;
     if (_error != null) {
       return Center(
         child: Padding(
@@ -311,7 +318,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
               Text(_error!,
                   textAlign: TextAlign.center,
                   style: _m(size: 13, weight: FontWeight.w500,
-                      color: _kSecondary, height: 1.5)),
+                      color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
             ],
           ),
         ),
@@ -320,16 +327,24 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 
     if (_messages.isEmpty && !_sending) return _buildEmptyState();
 
+    // reverse:true renders newest message at the bottom without any jump on
+    // new arrivals — index 0 = newest, last index = oldest.
+    final hasTyping = _sending && _sendingIsAsk;
+    final itemCount = _messages.length + (hasTyping ? 1 : 0);
     return ListView.builder(
       controller: _scroll,
-      padding:    const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      itemCount:  _messages.length + (_sending && _sendingIsAsk ? 1 : 0),
+      reverse:    true,
+      padding:    const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      itemCount:  itemCount,
       itemBuilder: (_, i) {
-        if (_sending && _sendingIsAsk && i == _messages.length) {
-          return const _TypingIndicator();
+        // Typing indicator sits at index 0 (visual bottom) while sending.
+        if (hasTyping && i == 0) return const _TypingIndicator();
+        final msgIndex = _messages.length - 1 - (hasTyping ? i - 1 : i);
+        if (msgIndex < 0 || msgIndex >= _messages.length) {
+          return const SizedBox.shrink();
         }
         return _MessageBubble(
-          message:       _messages[i],
+          message:       _messages[msgIndex],
           currentUserId: FirebaseAuth.instance.currentUser?.uid,
         );
       },
@@ -338,6 +353,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 
   // ── Empty state ─────────────────────────────────────────────────────────────
   Widget _buildEmptyState() {
+    final cs = Theme.of(context).colorScheme;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(28),
       child: Column(
@@ -347,28 +363,30 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
           const SizedBox(height: 18),
           Text('Community Explanation Hub',
               textAlign: TextAlign.center,
-              style: _m(size: 20, weight: FontWeight.w900)),
+              style: _m(size: 20, weight: FontWeight.w900,
+                  color: cs.onSurface)),
           const SizedBox(height: 10),
           Text(
             'Ask "Is this real?" about any headline, claim, or social post — or share what you know to help others. AI analysis included. Completely anonymous.',
             textAlign: TextAlign.center,
             style: _m(size: 13, weight: FontWeight.w500,
-                color: _kSecondary, height: 1.65),
+                color: cs.onSurface.withValues(alpha: 0.55), height: 1.65),
           ),
           const SizedBox(height: 24),
           // Who responds card
           Container(
             padding:     const EdgeInsets.all(16),
             decoration:  BoxDecoration(
-              color:        Colors.white,
+              color:        cs.surface,
               borderRadius: BorderRadius.circular(18),
-              border:       Border.all(color: const Color(0xFFE2E8F0)),
+              border:       Border.all(color: cs.outlineVariant),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Who responds to questions:',
-                    style: _m(size: 12, weight: FontWeight.w800, color: _kSecondary)),
+                    style: _m(size: 12, weight: FontWeight.w800,
+                        color: cs.onSurface.withValues(alpha: 0.55))),
                 const SizedBox(height: 12),
                 ...[
                   (MessageType.ai,    'AI Analysis',
@@ -405,7 +423,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                                     color: _typeColor(r.$1))),
                             Text(r.$3,
                                 style: _m(size: 11, weight: FontWeight.w500,
-                                    color: _kSecondary)),
+                                    color: cs.onSurface.withValues(alpha: 0.55))),
                           ],
                         ),
                       ),
@@ -420,15 +438,15 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
           Container(
             padding:    const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color:        const Color(0xFFEFF6FF),
+              color:        cs.surface,
               borderRadius: BorderRadius.circular(14),
               border:       Border.all(color: const Color(0xFFBFDBFE)),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('💬', style: TextStyle(fontSize: 16)),
-                SizedBox(width: 10),
+                const Text('💬', style: TextStyle(fontSize: 16)),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Try asking: "Is it true that 5G towers cause cancer?" '
@@ -437,7 +455,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                       fontFamily:  'Montserrat',
                       fontSize:    12,
                       fontWeight:  FontWeight.w500,
-                      color:       Color(0xFF1E40AF),
+                      color:       const Color(0xFF1E40AF),
                       height:      1.55,
                     ),
                   ),
@@ -452,11 +470,13 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 
   // ── Input bar ───────────────────────────────────────────────────────────────
   Widget _buildInput() {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final busy = _sending || _moderating;
     return Container(
-      decoration: const BoxDecoration(
-        color:  Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        color:  cs.surface,
+        border: Border(top: BorderSide(color: cs.outlineVariant)),
       ),
       padding: EdgeInsets.fromLTRB(
           16, 10, 16, MediaQuery.of(context).padding.bottom + 10),
@@ -478,13 +498,15 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                 child: Container(
                   width: 40, height: 40,
                   decoration: BoxDecoration(
-                    color:        _kBackground,
+                    color:        bgColor,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     Icons.image_outlined,
                     size:  20,
-                    color: busy ? _kSecondary.withValues(alpha: 0.4) : _kSecondary,
+                    color: busy
+                        ? cs.onSurface.withValues(alpha: 0.25)
+                        : cs.onSurface.withValues(alpha: 0.55),
                   ),
                 ),
               ),
@@ -497,15 +519,16 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                   minLines:      1,
                   textInputAction: TextInputAction.send,
                   onSubmitted:   (_) => _send(),
-                  style: _m(size: 14, weight: FontWeight.w500),
+                  style: _m(size: 14, weight: FontWeight.w500,
+                      color: cs.onSurface),
                   decoration: InputDecoration(
                     hintText: _isAskMode
                         ? 'Ask "Is this real?"…'
                         : 'Share what you know or think…',
                     hintStyle:      _m(size: 13, weight: FontWeight.w500,
-                        color: const Color(0xFFCBD5E1)),
+                        color: cs.onSurface.withValues(alpha: 0.35)),
                     filled:         true,
-                    fillColor:      _kBackground,
+                    fillColor:      bgColor,
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 12),
                     border: OutlineInputBorder(
@@ -575,10 +598,11 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   }
 
   Widget _buildModeToggle(bool disabled) {
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return Container(
       height: 36,
       decoration: BoxDecoration(
-        color:        _kBackground,
+        color:        bgColor,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -591,6 +615,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   }
 
   Widget _modeTab(String label, bool isAsk, bool disabled) {
+    final cs = Theme.of(context).colorScheme;
     final selected = _isAskMode == isAsk;
     final color    = isAsk ? _kAccent : _kReplyColor;
     return Expanded(
@@ -609,7 +634,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             style: _m(
               size:   12,
               weight: FontWeight.w700,
-              color:  selected ? Colors.white : _kSecondary,
+              color:  selected ? Colors.white : cs.onSurface.withValues(alpha: 0.55),
             ),
           ),
         ),
@@ -661,9 +686,25 @@ class _MessageBubble extends StatefulWidget {
   State<_MessageBubble> createState() => _MessageBubbleState();
 }
 
-class _MessageBubbleState extends State<_MessageBubble> {
+class _MessageBubbleState extends State<_MessageBubble>
+    with TickerProviderStateMixin {
   static const _allEmojis = ['👍', '👎', '❤️', '😮', '😂', '😢', '🔥', '🤔'];
   bool _pickerOpen = false;
+
+  final List<_FloatingEmojiEntry> _floatingEmojis = [];
+
+  void _spawnFloatingEmoji(String emoji) {
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 950),
+    );
+    final entry = _FloatingEmojiEntry(emoji: emoji, ctrl: ctrl);
+    setState(() => _floatingEmojis.add(entry));
+    ctrl.forward().then((_) {
+      if (mounted) setState(() => _floatingEmojis.remove(entry));
+      ctrl.dispose();
+    });
+  }
 
   Future<void> _launchUrl(String url) async {
     final uri = Uri.tryParse(url);
@@ -672,6 +713,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   }
 
   Widget _buildLinks(List<Map<String, String>> links, Color accentColor) {
+    final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: links.map((link) {
@@ -707,7 +749,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: _m(size: 11, weight: FontWeight.w500,
-                                color: _kPrimary, height: 1.4)),
+                                color: cs.onSurface, height: 1.4)),
                       ],
                     ),
                   ),
@@ -724,6 +766,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final uid = widget.currentUserId;
     if (uid == null) return;
     setState(() => _pickerOpen = false);
+    _spawnFloatingEmoji(emoji);
     try {
       await CommunityService.toggleReaction(widget.message.id, emoji, uid);
     } catch (_) {}
@@ -731,14 +774,22 @@ class _MessageBubbleState extends State<_MessageBubble> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: widget.message.isQuestion ? _buildQuestion() : _buildResponder(),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: widget.message.isQuestion ? _buildQuestion() : _buildResponder(),
+        ),
+        for (final entry in _floatingEmojis)
+          _FloatingEmojiWidget(entry: entry),
+      ],
     );
   }
 
   // Questions go on the RIGHT (green bubble, like the old "user" messages)
   Widget _buildQuestion() {
+    final cs = Theme.of(context).colorScheme;
     final bytes = widget.message.imageBytes;
     // The placeholder text set when user sends image-only — no need to show it
     // alongside the image itself.
@@ -756,7 +807,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text('Anonymous',
-                  style: _m(size: 10, weight: FontWeight.w700, color: _kSecondary)),
+                  style: _m(size: 10, weight: FontWeight.w700,
+                      color: cs.onSurface.withValues(alpha: 0.55))),
               const SizedBox(height: 4),
               Container(
                 // Tighter padding when image is present so it fills edge-to-edge
@@ -822,6 +874,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
 
   // AI and Community replies go on the LEFT
   Widget _buildResponder() {
+    final cs = Theme.of(context).colorScheme;
     final color   = _typeColor(widget.message.type);
     final bytes   = widget.message.imageBytes;
     final myEmoji = widget.currentUserId != null
@@ -853,7 +906,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: cs.surface,
                   borderRadius: const BorderRadius.only(
                     topLeft:     Radius.circular(4),
                     topRight:    Radius.circular(18),
@@ -882,7 +935,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     if (widget.message.text.isNotEmpty)
                       Text(widget.message.text,
                           style: _m(size: 13, weight: FontWeight.w500,
-                              color: _kPrimary, height: 1.55)),
+                              color: cs.onSurface, height: 1.55)),
                   ],
                 ),
               ),
@@ -912,12 +965,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           decoration: BoxDecoration(
                             color: isMe
                                 ? color.withValues(alpha: 0.15)
-                                : const Color(0xFFF1F5F9),
+                                : cs.surface,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
                               color: isMe
                                   ? color
-                                  : const Color(0xFFE2E8F0),
+                                  : cs.outlineVariant,
                               width: isMe ? 1.5 : 1,
                             ),
                           ),
@@ -931,7 +984,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                                   style: _m(
                                     size:   11,
                                     weight: FontWeight.w700,
-                                    color:  isMe ? color : _kSecondary,
+                                    color:  isMe ? color : cs.onSurface.withValues(alpha: 0.55),
                                   )),
                             ],
                           ),
@@ -954,17 +1007,17 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         decoration: BoxDecoration(
                           color: _pickerOpen
                               ? color.withValues(alpha: 0.15)
-                              : const Color(0xFFF1F5F9),
+                              : cs.surface,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: _pickerOpen ? color : const Color(0xFFE2E8F0),
+                            color: _pickerOpen ? color : cs.outlineVariant,
                           ),
                         ),
                         child: Center(
                           child: Icon(
                             _pickerOpen ? Icons.close : Icons.add,
                             size:  14,
-                            color: _pickerOpen ? color : _kSecondary,
+                            color: _pickerOpen ? color : cs.onSurface.withValues(alpha: 0.55),
                           ),
                         ),
                       ),
@@ -980,9 +1033,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 8),
                   decoration: BoxDecoration(
-                    color:        Colors.white,
+                    color:        cs.surface,
                     borderRadius: BorderRadius.circular(16),
-                    border:       Border.all(color: const Color(0xFFE2E8F0)),
+                    border:       Border.all(color: cs.outlineVariant),
                     boxShadow: [
                       BoxShadow(
                         color:      Colors.black.withValues(alpha: 0.08),
@@ -1054,6 +1107,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1071,7 +1125,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
           Container(
             padding:     const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
             decoration:  BoxDecoration(
-              color: Colors.white,
+              color: cs.surface,
               borderRadius: const BorderRadius.only(
                 topLeft:     Radius.circular(4),
                 topRight:    Radius.circular(18),
@@ -1105,6 +1159,54 @@ class _TypingIndicatorState extends State<_TypingIndicator>
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FLOATING EMOJI REACTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FloatingEmojiEntry {
+  _FloatingEmojiEntry({required this.emoji, required this.ctrl})
+      : xOffset = (math.Random().nextDouble() - 0.5) * 56;
+  final String emoji;
+  final AnimationController ctrl;
+  final double xOffset;
+}
+
+class _FloatingEmojiWidget extends StatelessWidget {
+  const _FloatingEmojiWidget({required this.entry});
+  final _FloatingEmojiEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: entry.ctrl,
+      builder: (_, _) {
+        final t     = entry.ctrl.value;
+        final rise  = Curves.easeOut.transform(t);
+        final fade  = 1.0 - Curves.easeIn.transform(t > 0.4 ? (t - 0.4) / 0.6 : 0.0);
+        final scale = 1.0 + Curves.elasticOut.transform(t.clamp(0.0, 0.5)) * 0.4;
+        return Positioned(
+          bottom: 28 + rise * 110,
+          left:   0,
+          right:  0,
+          child: Center(
+            child: Transform.translate(
+              offset: Offset(entry.xOffset, 0),
+              child: Opacity(
+                opacity: fade.clamp(0.0, 1.0),
+                child: Transform.scale(
+                  scale: scale,
+                  child: Text(entry.emoji,
+                      style: const TextStyle(fontSize: 28)),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

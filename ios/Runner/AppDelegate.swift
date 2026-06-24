@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import ARKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -9,10 +10,24 @@ import UIKit
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    let controller = window?.rootViewController as! FlutterViewController
+    // ── Trust Lens AR platform view ──────────────────────────────────────────
+    // Register unconditionally so the factory exists on simulators too.
+    // The Swift view guards ARSession.run() with isSupported at runtime.
+    if let arRegistrar = self.registrar(forPlugin: "TrustLensARPlugin") {
+      arRegistrar.register(
+        TrustLensARViewFactory(messenger: arRegistrar.messenger()),
+        withId: "credexa/trust_lens_ar"
+      )
+    }
+
+    // ── Share channel ────────────────────────────────────────────────────────
+    // After the UIScene migration the FlutterViewController / window is no longer
+    // available in didFinishLaunching, so use a plugin registrar's messenger
+    // instead of `window.rootViewController` (which would now be nil).
+    let shareMessenger = self.registrar(forPlugin: "CredexaSharePlugin")!.messenger()
     let shareChannel = FlutterMethodChannel(
       name: "credexa/share",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: shareMessenger
     )
 
     shareChannel.setMethodCallHandler { (call, result) in

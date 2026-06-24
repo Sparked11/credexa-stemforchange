@@ -47,3 +47,8 @@ app.*.map.json
 
 # Local API key config — never commit the real key
 lib/app_config.dart
+
+# Node.js tooling artifacts (not part of the Flutter app)
+node_modules/
+package.json
+package-lock.json

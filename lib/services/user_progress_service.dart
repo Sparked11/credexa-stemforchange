@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'feedback_service.dart';
 
 // ── Maturity level model ──────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ class UserProgressStats {
     required this.predictionsCorrect,
     required this.questsAnswered,
     required this.questsCorrect,
+    this.accuracyHistory = const [],
   });
 
   static const zero = UserProgressStats(
@@ -59,6 +61,8 @@ class UserProgressStats {
   final int predictionsCorrect;
   final int questsAnswered;
   final int questsCorrect;
+  // Running accuracy (0.0–1.0) snapshotted after every prediction — all-time.
+  final List<double> accuracyHistory;
 
   double get predictionAccuracy =>
       predictionsTotal == 0 ? 0 : predictionsCorrect / predictionsTotal;
@@ -71,6 +75,7 @@ class UserProgressStats {
     int? predictionsCorrect,
     int? questsAnswered,
     int? questsCorrect,
+    List<double>? accuracyHistory,
   }) =>
       UserProgressStats(
         maturityPoints:     maturityPoints     ?? this.maturityPoints,
@@ -78,6 +83,7 @@ class UserProgressStats {
         predictionsCorrect: predictionsCorrect ?? this.predictionsCorrect,
         questsAnswered:     questsAnswered     ?? this.questsAnswered,
         questsCorrect:      questsCorrect      ?? this.questsCorrect,
+        accuracyHistory:    accuracyHistory    ?? this.accuracyHistory,
       );
 }
 
@@ -103,12 +109,20 @@ class UserProgressService {
 
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();
+    List<double> hist = [];
+    try {
+      final raw = p.getString(_k('acc_hist')) ?? '[]';
+      hist = (jsonDecode(raw) as List)
+          .map((e) => (e as num).toDouble())
+          .toList();
+    } catch (_) {}
     stats.value = UserProgressStats(
       maturityPoints:     p.getInt(_k('mp')) ?? 0,
       predictionsTotal:   p.getInt(_k('pt')) ?? 0,
       predictionsCorrect: p.getInt(_k('pc')) ?? 0,
       questsAnswered:     p.getInt(_k('qa')) ?? 0,
       questsCorrect:      p.getInt(_k('qc')) ?? 0,
+      accuracyHistory:    hist,
     );
   }
 
@@ -122,6 +136,21 @@ class UserProgressService {
     stats.value = s;
   }
 
+  // Append a running-accuracy snapshot to the history (max 50 points).
+  static Future<List<double>> _appendHistory(double accuracy) async {
+    final p   = await SharedPreferences.getInstance();
+    List<double> hist = [];
+    try {
+      hist = (jsonDecode(p.getString(_k('acc_hist')) ?? '[]') as List)
+          .map((e) => (e as num).toDouble())
+          .toList();
+    } catch (_) {}
+    hist.add(accuracy);
+    if (hist.length > 50) hist.removeRange(0, hist.length - 50);
+    await p.setString(_k('acc_hist'), jsonEncode(hist));
+    return hist;
+  }
+
   // ── Accuracy prediction ──────────────────────────────────────────────────────
   // [prediction] is 'true' or 'false' (user's guess before seeing the result).
   // [aiVerdict] is the synthesis finalVerdict string from AnalysisResult.
@@ -129,10 +158,14 @@ class UserProgressService {
       String prediction, String aiVerdict) async {
     final correct = _isPredictionCorrect(prediction, aiVerdict);
     final s = stats.value;
+    final newCorrect = s.predictionsCorrect + (correct ? 1 : 0);
+    final newTotal   = s.predictionsTotal + 1;
+    final hist = await _appendHistory(newCorrect / newTotal);
     await _save(s.copyWith(
       maturityPoints:     s.maturityPoints + (correct ? 5 : 1),
-      predictionsTotal:   s.predictionsTotal + 1,
-      predictionsCorrect: s.predictionsCorrect + (correct ? 1 : 0),
+      predictionsTotal:   newTotal,
+      predictionsCorrect: newCorrect,
+      accuracyHistory:    hist,
     ));
     return correct;
   }
@@ -144,6 +177,31 @@ class UserProgressService {
     }
     // 'false' prediction is correct if verdict is misleading or uncertain
     return v == 'MISLEADING' || v == 'LIKELY_FALSE' || v == 'UNCERTAIN';
+  }
+
+  // ── De-bias manipulation slider prediction ───────────────────────────────────
+  // Correct if the user's guess lands in the same bias category as the AI score.
+  static Future<bool> recordDebiasPrediction(int userScore, int aiScore) async {
+    final correct = _biasCategory(userScore) == _biasCategory(aiScore);
+    final s = stats.value;
+    final newCorrect = s.predictionsCorrect + (correct ? 1 : 0);
+    final newTotal   = s.predictionsTotal + 1;
+    final hist = await _appendHistory(newCorrect / newTotal);
+    await _save(s.copyWith(
+      maturityPoints:     s.maturityPoints + (correct ? 5 : 1),
+      predictionsTotal:   newTotal,
+      predictionsCorrect: newCorrect,
+      accuracyHistory:    hist,
+    ));
+    return correct;
+  }
+
+  // 0=Neutral, 1=Mildly Biased, 2=Clearly Biased, 3=Highly Biased
+  static int _biasCategory(int score) {
+    if (score <= 20) return 0;
+    if (score <= 50) return 1;
+    if (score <= 80) return 2;
+    return 3;
   }
 
   // ── Daily quest ──────────────────────────────────────────────────────────────
@@ -183,10 +241,16 @@ class UserProgressService {
 
   static Future<void> recordQuestResult({required bool correct}) async {
     final s = stats.value;
+    final newCorrect = s.predictionsCorrect + (correct ? 1 : 0);
+    final newTotal   = s.predictionsTotal + 1;
+    final hist = await _appendHistory(newCorrect / newTotal);
     await _save(s.copyWith(
-      maturityPoints: s.maturityPoints + (correct ? 15 : 5),
-      questsAnswered: s.questsAnswered + 1,
-      questsCorrect:  s.questsCorrect + (correct ? 1 : 0),
+      maturityPoints:     s.maturityPoints + (correct ? 15 : 5),
+      questsAnswered:     s.questsAnswered + 1,
+      questsCorrect:      s.questsCorrect + (correct ? 1 : 0),
+      predictionsTotal:   newTotal,
+      predictionsCorrect: newCorrect,
+      accuracyHistory:    hist,
     ));
   }
 
@@ -201,17 +265,14 @@ class UserProgressService {
     required bool positive,
     String? comment,
   }) async {
-    final p       = await SharedPreferences.getInstance();
-    final count   = (p.getInt(_k('sv_count'))  ?? 0) + 1;
-    final pos     = (p.getInt(_k('sv_pos'))    ?? 0) + (positive ? 1 : 0);
+    // Persist locally so the trigger counter still works.
+    final p     = await SharedPreferences.getInstance();
+    final count = (p.getInt(_k('sv_count')) ?? 0) + 1;
     await p.setInt(_k('sv_count'), count);
-    await p.setInt(_k('sv_pos'),   pos);
-    if (comment != null && comment.trim().isNotEmpty) {
-      final existing = p.getStringList(_k('sv_comments')) ?? [];
-      existing.insert(0, comment.trim());
-      // Keep last 20 comments to avoid unbounded growth.
-      await p.setStringList(_k('sv_comments'), existing.take(20).toList());
-    }
+
+    // Send to Google Sheets — errors are swallowed inside FeedbackService.
+    FeedbackService.submit(helpful: positive, comment: comment);
+
     // Bonus maturity points for engaging with the survey.
     await addMaturityPoints(2);
   }

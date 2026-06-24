@@ -66,11 +66,12 @@ const kBadges = [
 class ProfileData {
   const ProfileData({
     this.photoBase64,
-    this.checks   = 0,
-    this.debiases = 0,
-    this.posts    = 0,
-    this.quests   = 0,
-    this.xp       = 0,
+    this.checks        = 0,
+    this.debiases      = 0,
+    this.posts         = 0,
+    this.quests        = 0,
+    this.xp            = 0,
+    this.bannerThemeId = 0,
   });
   final String? photoBase64;
   final int checks;
@@ -78,6 +79,7 @@ class ProfileData {
   final int posts;
   final int quests;
   final int xp;
+  final int bannerThemeId;
 
   ProfileData copyWith({
     String? photoBase64,
@@ -86,15 +88,17 @@ class ProfileData {
     int? posts,
     int? quests,
     int? xp,
+    int? bannerThemeId,
     bool clearPhoto = false,
   }) =>
       ProfileData(
-        photoBase64: clearPhoto ? null : (photoBase64 ?? this.photoBase64),
-        checks:      checks   ?? this.checks,
-        debiases:    debiases ?? this.debiases,
-        posts:       posts    ?? this.posts,
-        quests:      quests   ?? this.quests,
-        xp:          xp       ?? this.xp,
+        photoBase64:   clearPhoto ? null : (photoBase64 ?? this.photoBase64),
+        checks:        checks        ?? this.checks,
+        debiases:      debiases      ?? this.debiases,
+        posts:         posts         ?? this.posts,
+        quests:        quests        ?? this.quests,
+        xp:            xp            ?? this.xp,
+        bannerThemeId: bannerThemeId ?? this.bannerThemeId,
       );
 }
 
@@ -121,12 +125,13 @@ class ProfileService {
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     final d = ProfileData(
-      photoBase64: prefs.getString(_key('photo')),
-      checks:      prefs.getInt(_key('checks'))   ?? 0,
-      debiases:    prefs.getInt(_key('debiases')) ?? 0,
-      posts:       prefs.getInt(_key('posts'))    ?? 0,
-      quests:      prefs.getInt(_key('quests'))   ?? 0,
-      xp:          prefs.getInt(_key('xp'))       ?? 0,
+      photoBase64:   prefs.getString(_key('photo')),
+      checks:        prefs.getInt(_key('checks'))       ?? 0,
+      debiases:      prefs.getInt(_key('debiases'))     ?? 0,
+      posts:         prefs.getInt(_key('posts'))        ?? 0,
+      quests:        prefs.getInt(_key('quests'))       ?? 0,
+      xp:            prefs.getInt(_key('xp'))           ?? 0,
+      bannerThemeId: prefs.getInt(_key('bannerTheme'))  ?? 0,
     );
     data.value = d;
     _refreshTopBadge(d);
@@ -139,6 +144,13 @@ class ProfileService {
     final next = data.value.copyWith(photoBase64: base64);
     data.value = next;
     _refreshTopBadge(next);
+  }
+
+  // Save the selected banner theme index.
+  static Future<void> setBannerTheme(int themeId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_key('bannerTheme'), themeId);
+    data.value = data.value.copyWith(bannerThemeId: themeId);
   }
 
   // Increment a usage counter and persist.

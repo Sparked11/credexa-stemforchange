@@ -5,8 +5,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/analysis_result.dart';
 import 'services/analysis_service.dart';
@@ -57,6 +58,17 @@ class _Face {
   final Rect rect;
 }
 
+enum _ArAnchorKind { text, face }
+
+// Represents one tap-placed AR annotation on iOS.
+class _ArAnchor {
+  _ArAnchor({required this.id, required this.screenPos, required this.kind, this.region});
+  final String id;
+  Offset screenPos;
+  final _ArAnchorKind kind;
+  final _Region? region; // null for face anchors
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  ON-DEVICE QUICK CLASSIFIER
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +87,13 @@ class _Classifier {
     "woke agenda destroys",
     "they are coming for your",
     "anti-american agenda",
+    "they're trying to silence",
+    "nobody talks about this",
+    "you are being lied to",
+    "the truth they fear",
+    "wake up everyone",
+    "they banned this information",
+    "what the media hides",
   ];
   static const _clickbait = [
     "you won't believe what",
@@ -86,6 +105,11 @@ class _Classifier {
     "the video they don't want",
     "share before it's taken down",
     "censored by big tech",
+    "stop scrolling and read",
+    "most people don't know this",
+    "this will shock you",
+    "what the government doesn't want",
+    "they deleted this video",
   ];
   static const _usVsThem = [
     'deep state', 'the globalists', 'sheeple',
@@ -93,6 +117,9 @@ class _Classifier {
     'great reset agenda', 'mainstream media lies',
     'fake news media', 'they control everything',
     'crisis actors', 'controlled opposition',
+    'the elites', 'globalist agenda',
+    'they want you silent', 'soros funded',
+    'the establishment wants',
   ];
   static const _fear = [
     "your family is in danger",
@@ -103,12 +130,20 @@ class _Classifier {
     "collapse is coming",
     "prepare for the worst",
     "urgent action required now",
+    "warning this is real",
+    "act now before it's",
+    "time is running out",
+    "don't say you weren't warned",
+    "this is an emergency",
+    "your children are at risk",
   ];
   static const _unverified = [
     'rumor has it',
     'according to anonymous',
     'unnamed government official',
     'word has it that',
+    'sources say that',
+    'insider reports claim',
   ];
   static const _propaganda = [
     'plandemic', 'scamdemic', 'stolen election',
@@ -116,6 +151,9 @@ class _Classifier {
     'government hoax', 'do your own research',
     'wake up sheeple', 'great replacement',
     'white genocide', 'crisis actor',
+    'great awakening', 'red pilled',
+    'false narrative', 'controlled narrative',
+    'the real truth',
   ];
 
   static List<_Flag> classify(String text) {
@@ -228,8 +266,8 @@ class _FaceTrack {
   int         missCount = 0;      // consecutive missed detection cycles
   bool        _dead     = false;
 
-  // Require 2 hits before showing — suppresses single-frame ghost detections.
-  static const _nInit   = 2;
+  // Require 3 consecutive hits before showing — filters transient false positives.
+  static const _nInit   = 3;
   // Allow 4 missed cycles (~2.7 s at 1.5 Hz) before deleting a confirmed track.
   static const _maxMiss = 4;
 
@@ -355,6 +393,22 @@ class _TrustLensState extends State<TrustLensPage>
   final _pendingTexts = <String>{};
   DateTime? _lastAutoCheck;
 
+  // ── Torch ────────────────────────────────────────────────────────────────────
+  bool _torchOn = false;
+
+  // ── Dispose guard (prevents race between _flipCamera and _processFrame) ──────
+  bool _isDisposing = false;
+
+  // ── iOS ARKit state ──────────────────────────────────────────────────────────
+  // Only used when Platform.isIOS. The ARKit scene runs inside a UiKitView;
+  // this channel is wired up in _onArViewCreated once the native view exists.
+  MethodChannel? _arChannel;
+  bool _arReady = false;
+  bool _isAnalyzing = false;
+  final _arAnchors = <_ArAnchor>[];
+  bool _arTorchOn  = false;
+  bool _arUseFront = false;
+
   // ── Animation ────────────────────────────────────────────────────────────────
   late final AnimationController _pulseCtrl;
 
@@ -392,7 +446,8 @@ class _TrustLensState extends State<TrustLensPage>
     if (!seen) {
       if (mounted) setState(() => _showIntro = true);
     } else {
-      _initCamera();
+      // iOS: ARKit view starts automatically via UiKitView; no camera init needed.
+      if (!Platform.isIOS) _initCamera();
     }
   }
 
@@ -401,7 +456,7 @@ class _TrustLensState extends State<TrustLensPage>
     await prefs.setBool('trust_lens_intro_seen', true);
     if (mounted) {
       setState(() => _showIntro = false);
-      _initCamera();
+      if (!Platform.isIOS) _initCamera();
     }
   }
 
@@ -428,7 +483,9 @@ class _TrustLensState extends State<TrustLensPage>
       );
       _ctrl = CameraController(
         cam,
-        ResolutionPreset.high,
+        // medium (~1280×720) on Android: cuts Dart-side YUV→NV21 work by ~55%
+        // compared to high (~1920×1080) while keeping text recognition accurate.
+        Platform.isAndroid ? ResolutionPreset.medium : ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: Platform.isIOS
             ? ImageFormatGroup.bgra8888
@@ -445,17 +502,35 @@ class _TrustLensState extends State<TrustLensPage>
 
   Future<void> _flipCamera() async {
     HapticFeedback.lightImpact();
+    _isDisposing = true;
     setState(() {
-      _isReady = false;
-      _regions = [];
+      _isReady   = false;
+      _isScanning = false;
+      _regions   = [];
       _faceTracks.clear();
       _regionTracks.clear();
     });
     await _ctrl?.stopImageStream();
+    // Brief pause lets any in-flight _processFrame reach its mounted/disposing checks.
+    await Future.delayed(const Duration(milliseconds: 120));
     await _ctrl?.dispose();
-    _ctrl = null;
+    _ctrl          = null;
+    _torchOn       = false;
+    _isDisposing   = false;
     _useBackCamera = !_useBackCamera;
     await _initCamera();
+  }
+
+  Future<void> _toggleTorch() async {
+    if (_ctrl == null || !_isReady) return;
+    HapticFeedback.lightImpact();
+    final next = !_torchOn;
+    try {
+      await _ctrl!.setFlashMode(next ? FlashMode.torch : FlashMode.off);
+      if (mounted) setState(() => _torchOn = next);
+    } catch (_) {
+      // Torch not supported on this device — silently ignore.
+    }
   }
 
   // ── MOT: SORT algorithm ──────────────────────────────────────────────────────
@@ -541,7 +616,7 @@ class _TrustLensState extends State<TrustLensPage>
     _frameSkip++;
     if (_frameSkip < 20) return;
     _frameSkip = 0;
-    if (_isBusy || _screenSize == null) return;
+    if (_isBusy || _isDisposing || _screenSize == null) return;
     _isBusy = true;
     _processFrame(image);
   }
@@ -550,13 +625,16 @@ class _TrustLensState extends State<TrustLensPage>
     try {
       if (mounted) setState(() => _isScanning = true);
       final inputImage = _buildInputImage(image);
-      if (inputImage == null) return;
+      if (inputImage == null) {
+        if (mounted) setState(() => _isScanning = false);
+        return;
+      }
 
       final results = await Future.wait([
         _textRec.processImage(inputImage),
         _faceDet.processImage(inputImage),
       ]);
-      if (!mounted) return;
+      if (_isDisposing || !mounted) return;
 
       final recognized = results[0] as RecognizedText;
       final faceList   = results[1] as List<Face>;
@@ -567,25 +645,71 @@ class _TrustLensState extends State<TrustLensPage>
       final screen     = _screenSize!;
       final isFront    = !_useBackCamera;
 
-      final newRegions = <_Region>[];
+      // ── Convert blocks → screen rects, filter character-level noise ─────────
+      final rawItems = <({Rect rect, String text})>[];
       for (final block in recognized.blocks) {
         final t = block.text.trim();
-        if (t.length < 8) continue;
+        if (t.isEmpty) continue;
         final r = _transformTextBox(block.boundingBox, imgSize, previewSize, screen, isFront);
         if (r.right < 0 || r.left > screen.width ||
             r.bottom < 0 || r.top > screen.height) { continue; }
-        newRegions.add(_Region(
-          text: t,
-          rect: r,
-          flags: _Classifier.classify(t),
-        ));
+        if (r.width < 18 || r.height < 8) continue; // skip single-glyph fragments
+        rawItems.add((rect: r, text: t));
       }
+
+      // Sort top → bottom, left → right for stable merge order
+      rawItems.sort((a, b) {
+        final dy = a.rect.top - b.rect.top;
+        if (dy.abs() > 22) return dy.sign.toInt();
+        return (a.rect.left - b.rect.left).sign.toInt();
+      });
+
+      // Merge horizontally overlapping blocks that are vertically adjacent
+      final mergedItems = <({Rect rect, String text})>[];
+      for (final item in rawItems) {
+        bool absorbed = false;
+        for (int i = 0; i < mergedItems.length; i++) {
+          final g = mergedItems[i];
+          final hClose = item.rect.left  <= g.rect.right + 40 &&
+                         item.rect.right >= g.rect.left  - 40;
+          final vClose = item.rect.top - g.rect.bottom < 30;
+          if (hClose && vClose) {
+            mergedItems[i] = (
+              rect: Rect.fromLTRB(
+                math.min(g.rect.left,   item.rect.left),
+                math.min(g.rect.top,    item.rect.top),
+                math.max(g.rect.right,  item.rect.right),
+                math.max(g.rect.bottom, item.rect.bottom),
+              ),
+              text: '${g.text} ${item.text}',
+            );
+            absorbed = true;
+            break;
+          }
+        }
+        if (!absorbed) { mergedItems.add(item); }
+      }
+
+      // Only keep merged groups with enough text to be meaningful
+      final newRegions = mergedItems
+          .where((m) => m.text.length >= 20)
+          .map((m) => _Region(text: m.text, rect: m.rect, flags: _Classifier.classify(m.text)))
+          .toList();
 
       final newFaces = faceList
           .map((f) => _Face(rect: _transformFaceBox(f.boundingBox, imgSize, previewSize, screen, isFront)))
-          .where((f) =>
-              f.rect.right > 0 && f.rect.left < screen.width &&
-              f.rect.bottom > 0 && f.rect.top < screen.height)
+          .where((f) {
+            final r = f.rect;
+            if (r.right <= 0 || r.left >= screen.width) return false;
+            if (r.bottom <= 0 || r.top >= screen.height) return false;
+            if (r.width <= 0 || r.height <= 0) return false;
+            // Faces are never 3× taller than wide (lamps, windows, etc. get this shape)
+            final ar = r.height / r.width;
+            if (ar > 3.0 || ar < 0.4) return false;
+            // Minimum area: face must cover at least 1.5% of screen
+            if (r.width * r.height < screen.width * screen.height * 0.015) return false;
+            return true;
+          })
           .toList();
 
       setState(() {
@@ -742,7 +866,7 @@ class _TrustLensState extends State<TrustLensPage>
     if (_pendingTexts.isNotEmpty) return; // only one check at a time
     final now = DateTime.now();
     if (_lastAutoCheck != null &&
-        now.difference(_lastAutoCheck!).inSeconds < 10) { return; }
+        now.difference(_lastAutoCheck!).inSeconds < 5) { return; }
 
     // Pick best candidate: flagged regions first, then by text length
     final candidates = _regions
@@ -769,6 +893,10 @@ class _TrustLensState extends State<TrustLensPage>
       final result = await AnalysisService.analyzeRssOnly(text);
       if (!mounted) return;
       setState(() {
+        // Evict oldest entry when cache reaches 50 to prevent unbounded growth.
+        if (_resultCache.length >= 50) {
+          _resultCache.remove(_resultCache.keys.first);
+        }
         _resultCache[text] = result;
         _pendingTexts.remove(text);
       });
@@ -803,16 +931,382 @@ class _TrustLensState extends State<TrustLensPage>
   @override
   void dispose() {
     _pulseCtrl.dispose();
-    _ctrl?.dispose();
     _textRec.close();
-    _faceDet.close();
+    if (Platform.isIOS) {
+      _arChannel?.invokeMethod<void>('clearNodes');
+    } else {
+      _ctrl?.dispose();
+      _faceDet.close();
+    }
     super.dispose();
+  }
+
+  // ── iOS ARKit helpers ─────────────────────────────────────────────────────────
+
+  void _onArViewCreated(int viewId) {
+    _arChannel = MethodChannel('credexa/trust_lens_ar/$viewId');
+    if (mounted) setState(() => _arReady = true);
+  }
+
+  Future<void> _onArTap(Offset pos) async {
+    if (_arChannel == null || _isAnalyzing) return;
+    HapticFeedback.lightImpact();
+    setState(() => _isAnalyzing = true);
+
+    try {
+      final screen = _screenSize ?? const Size(390, 844);
+
+      // 1 — Grab the raw camera frame from ARKit (portrait-oriented JPEG)
+      final raw = await _arChannel!.invokeMethod<Map>('snapshot');
+      if (raw == null || !mounted) return;
+      final jpeg  = (raw['jpeg'] as Uint8List);
+      final jpegW = (raw['width']  as int).toDouble();
+      final jpegH = (raw['height'] as int).toDouble();
+
+      // 2 — Write to a temp file so ML Kit can read it
+      final tmp  = await getTemporaryDirectory();
+      final file = File('${tmp.path}/tl_snap_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await file.writeAsBytes(jpeg);
+      final inputImage = InputImage.fromFilePath(file.path);
+
+      // Start face detection concurrently (reads current ARKit frame on Swift side)
+      final facesFuture = _arChannel!.invokeMethod<List>('detectFaces');
+
+      // 3 — Recognise text
+      final recognised = await _textRec.processImage(inputImage);
+      try { await file.delete(); } catch (_) {}
+      if (!mounted) return;
+
+      // 4 — Collect face results
+      List facesRaw = [];
+      try { facesRaw = await facesFuture ?? []; } catch (_) {}
+
+      // 5 — Map ML Kit blocks to screen coords
+      final scaleX = screen.width  / jpegW;
+      final scaleY = screen.height / jpegH;
+
+      final rawItems = <({Rect rect, String text})>[];
+      for (final block in recognised.blocks) {
+        final t = block.text.trim();
+        if (t.isEmpty) continue;
+        final bb = block.boundingBox;
+        final r = Rect.fromLTRB(
+          bb.left * scaleX, bb.top * scaleY,
+          bb.right * scaleX, bb.bottom * scaleY,
+        );
+        if (r.width < 18 || r.height < 8) continue;
+        rawItems.add((rect: r, text: t));
+      }
+
+      rawItems.sort((a, b) {
+        final dy = a.rect.top - b.rect.top;
+        if (dy.abs() > 22) return dy.sign.toInt();
+        return (a.rect.left - b.rect.left).sign.toInt();
+      });
+
+      // 6 — Merge nearby text blocks
+      final merged = <({Rect rect, String text})>[];
+      for (final item in rawItems) {
+        bool absorbed = false;
+        for (int i = 0; i < merged.length; i++) {
+          final g = merged[i];
+          final hClose = item.rect.left  <= g.rect.right + 40 &&
+                         item.rect.right >= g.rect.left  - 40;
+          final vClose = item.rect.top - g.rect.bottom < 30;
+          if (hClose && vClose) {
+            merged[i] = (
+              rect: Rect.fromLTRB(
+                math.min(g.rect.left,   item.rect.left),
+                math.min(g.rect.top,    item.rect.top),
+                math.max(g.rect.right,  item.rect.right),
+                math.max(g.rect.bottom, item.rect.bottom),
+              ),
+              text: '${g.text} ${item.text}',
+            );
+            absorbed = true;
+            break;
+          }
+        }
+        if (!absorbed) { merged.add(item); }
+      }
+
+      // 7 — Find nearest text region to tap
+      _Region? best;
+      double bestDist = double.infinity;
+      for (final m in merged) {
+        if (m.text.length < 15) continue;
+        final d = (m.rect.center - pos).distance;
+        if (d < bestDist) {
+          bestDist = d;
+          best = _Region(
+            text:  m.text,
+            rect:  m.rect,
+            flags: _Classifier.classify(m.text),
+          );
+        }
+      }
+
+      // 8 — Find nearest face to tap (VN coords: top-left origin, normalized)
+      Rect? bestFaceRect;
+      double bestFaceDist = double.infinity;
+      for (final f in facesRaw.whereType<Map>()) {
+        final fx = (f['x'] as num).toDouble() * screen.width;
+        final fy = (f['y'] as num).toDouble() * screen.height;
+        final fw = (f['w'] as num).toDouble() * screen.width;
+        final fh = (f['h'] as num).toDouble() * screen.height;
+        final rect = Rect.fromLTWH(fx, fy, fw, fh);
+        // Direct hit: tap is inside the face box — use distance 0 to guarantee win
+        final d = rect.contains(pos) ? 0.0 : (rect.center - pos).distance;
+        if (d < bestFaceDist) {
+          bestFaceDist = d;
+          bestFaceRect = rect;
+        }
+      }
+
+      // 9 — Pick: face wins on direct hit (d==0) or when no text is found;
+      //     otherwise centroid-distance decides.
+      final pickFace = bestFaceRect != null && (best == null || bestFaceDist < bestDist);
+      if (!pickFace && best == null) return;
+
+      // 10 — Raycast the tap to a 3-D world position
+      final worldMap = await _arChannel!.invokeMethod<Map>('raycast', {
+        'x': pos.dx / screen.width,
+        'y': pos.dy / screen.height,
+      });
+
+      // 11 — Place a 3-D anchor at the world position
+      final anchorId = 'a${DateTime.now().millisecondsSinceEpoch}';
+      if (worldMap != null) {
+        final clr = pickFace ? _kLens : best!.color;
+        final hexColor = ((clr.r * 255).toInt() << 16) |
+                         ((clr.g * 255).toInt() << 8)  |
+                          (clr.b * 255).toInt();
+        await _arChannel!.invokeMethod<void>('addNode', {
+          'id':    anchorId,
+          'x':     worldMap['x'],
+          'y':     worldMap['y'],
+          'z':     worldMap['z'],
+          'color': hexColor,
+        });
+      }
+
+      // 12 — Track locally and show detail sheet
+      if (mounted) {
+        setState(() {
+          _arAnchors.add(_ArAnchor(
+            id:        anchorId,
+            screenPos: pos,
+            kind:      pickFace ? _ArAnchorKind.face : _ArAnchorKind.text,
+            region:    pickFace ? null : best,
+          ));
+        });
+        if (pickFace) {
+          _showFaceSheet();
+        } else {
+          _showRegionSheet(best!);
+        }
+      }
+    } catch (e) {
+      debugPrint('[TrustLens AR] tap error: $e');
+    } finally {
+      if (mounted) setState(() => _isAnalyzing = false);
+    }
+  }
+
+  Future<void> _toggleArTorch() async {
+    final next = !_arTorchOn;
+    await _arChannel?.invokeMethod<void>('setTorch', {'on': next});
+    if (mounted) setState(() => _arTorchOn = next);
+  }
+
+  // Flip between the rear (world-tracking) and front (face-tracking) cameras.
+  // Returns false natively if the front camera / face tracking isn't supported.
+  Future<void> _flipArCamera() async {
+    HapticFeedback.lightImpact();
+    final next = !_arUseFront;
+    final ok = await _arChannel?.invokeMethod<bool>('flipCamera', {'front': next});
+    if (!mounted) return;
+    if (ok == true) {
+      setState(() {
+        _arUseFront = next;
+        _arTorchOn  = false;   // front camera has no torch
+        _arAnchors.clear();    // world anchors don't carry across a camera switch
+      });
+    }
+  }
+
+  Widget _buildARKit() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // ── ARKit camera fills the screen ────────────────────────────────
+          if (!_showIntro)
+            Positioned.fill(
+              child: UiKitView(
+                viewType: 'credexa/trust_lens_ar',
+                onPlatformViewCreated: _onArViewCreated,
+                creationParamsCodec: const StandardMessageCodec(),
+              ),
+            ),
+
+          // ── Single overlay layer: tap + pins + chrome ────────────────────
+          // Everything drawn over the camera lives in ONE Positioned.fill
+          // overlay. Layering separate translucent bars directly over the ARKit
+          // platform view makes the iOS embedder drop it (black screen), so the
+          // chrome here is small shadowed controls, not full-width gradient bars.
+          if (_arReady)
+            Positioned.fill(
+              child: LayoutBuilder(builder: (_, c) {
+                _screenSize = Size(c.maxWidth, c.maxHeight);
+                return Stack(
+                  children: [
+                    // Tap capture + pin painter
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTapDown: (d) => _onArTap(d.localPosition),
+                        child: AnimatedBuilder(
+                          animation: _pulseCtrl,
+                          builder: (_, _) => CustomPaint(
+                            painter: _ArOverlayPainter(
+                              anchors: _arAnchors,
+                              pulse:   _pulseCtrl.value,
+                            ),
+                            child: const SizedBox.expand(),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Top bar: back · TRUST LENS · flip · flashlight
+                    Positioned(
+                      top: 0, left: 0, right: 0,
+                      child: SafeArea(
+                        bottom: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                          child: Row(
+                            children: [
+                              _arHudButton(
+                                icon: Icons.arrow_back_ios_new_rounded,
+                                onTap: () => Navigator.of(context).pop(),
+                              ),
+                              const SizedBox(width: 12),
+                              const Text(
+                                'TRUST LENS',
+                                style: TextStyle(
+                                  fontFamily: 'Montserrat',
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
+                                  color: Colors.white,
+                                  shadows: [
+                                    Shadow(color: Colors.black, blurRadius: 8),
+                                  ],
+                                ),
+                              ),
+                              const Spacer(),
+                              _arHudButton(
+                                icon: Icons.flip_camera_ios_rounded,
+                                onTap: _flipArCamera,
+                              ),
+                              const SizedBox(width: 10),
+                              _arHudButton(
+                                icon: _arTorchOn
+                                    ? Icons.flashlight_on_rounded
+                                    : Icons.flashlight_off_rounded,
+                                onTap: _toggleArTorch,
+                                active: _arTorchOn,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Bottom instruction text
+                    Positioned(
+                      bottom: 0, left: 0, right: 0,
+                      child: SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(28, 0, 28, 26),
+                          child: Text(
+                            'Point at a headline, post, or screen — then tap any text or face to fact-check it.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 13,
+                              height: 1.4,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withValues(alpha: 0.92),
+                              shadows: const [
+                                Shadow(color: Colors.black, blurRadius: 10),
+                                Shadow(color: Colors.black, blurRadius: 4),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
+
+          // ── Boot spinner (before ARKit initialises) ───────────────────────
+          if (!_arReady && !_showIntro)
+            const Center(child: _BootView()),
+
+          // ── Intro overlay ────────────────────────────────────────────────
+          if (_showIntro)
+            Positioned.fill(
+              child: _TrustLensIntro(onStart: _dismissIntro),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // Small circular HUD control — translucent disc + shadow so it stays legible
+  // over the camera without a full-width gradient bar (which breaks platform-view
+  // compositing on iOS).
+  Widget _arHudButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool active = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: active
+              ? _kAmber.withValues(alpha: 0.32)
+              : Colors.black.withValues(alpha: 0.45),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: active
+                ? _kAmber.withValues(alpha: 0.85)
+                : Colors.white.withValues(alpha: 0.40),
+            width: 1.4,
+          ),
+          boxShadow: const [
+            BoxShadow(color: Colors.black54, blurRadius: 8),
+          ],
+        ),
+        child: Icon(icon, color: active ? _kAmber : Colors.white, size: 20),
+      ),
+    );
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    if (Platform.isIOS) return _buildARKit();
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -875,30 +1369,64 @@ class _TrustLensState extends State<TrustLensPage>
             ),
           ),
 
-          // ── Camera flip button ────────────────────────────────────────────
+          // ── Camera controls (torch + flip) ───────────────────────────────
           if (_isReady)
             Positioned(
               bottom: 110,
               right: 20,
-              child: GestureDetector(
-                onTap: _flipCamera,
-                child: Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.35),
-                      width: 1.5,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Torch toggle
+                  GestureDetector(
+                    onTap: _toggleTorch,
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: _torchOn
+                            ? _kAmber.withValues(alpha: 0.30)
+                            : Colors.black.withValues(alpha: 0.55),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _torchOn
+                              ? _kAmber.withValues(alpha: 0.85)
+                              : Colors.white.withValues(alpha: 0.35),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Icon(
+                        _torchOn
+                            ? Icons.flashlight_on_rounded
+                            : Icons.flashlight_off_rounded,
+                        color: _torchOn ? _kAmber : Colors.white,
+                        size: 24,
+                      ),
                     ),
                   ),
-                  child: const Icon(
-                    Icons.flip_camera_ios_rounded,
-                    color: Colors.white,
-                    size: 24,
+                  const SizedBox(height: 12),
+                  // Camera flip
+                  GestureDetector(
+                    onTap: _flipCamera,
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.35),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.flip_camera_ios_rounded,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
 
@@ -957,8 +1485,8 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
     _fadeCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
-      value: 0,
-    )..forward();
+      value: 1,
+    );
   }
 
   @override
@@ -1788,7 +2316,7 @@ class _LivePillState extends State<_LivePill>
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isScanning ? _kGreen : Colors.red;
+    final color = widget.isScanning ? _kGreen : _kLens;
     return AnimatedBuilder(
       animation: _c,
       builder: (_, _) => Container(
@@ -1956,7 +2484,12 @@ class _RegionSheetState extends State<_RegionSheet> {
   @override
   void initState() {
     super.initState();
-    _result = widget.initialResult; // pre-populate if auto-check already finished
+    _result = widget.initialResult;
+    // Auto-start if no result is available and background check isn't running.
+    // Removes the need to manually tap the button every time.
+    if (_result == null && !widget.isChecking) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _runAnalysis());
+    }
   }
 
   Future<void> _runAnalysis() async {
@@ -2533,3 +3066,105 @@ class _ErrorView extends StatelessWidget {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  iOS ARKit — OVERLAY PAINTER
+//  Draws a labelled pin at each anchor's last-known 2-D screen position.
+//  No coordinate transforms needed — _onArTap stores the tap in screen space.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ArOverlayPainter extends CustomPainter {
+  const _ArOverlayPainter({required this.anchors, required this.pulse});
+  final List<_ArAnchor> anchors;
+  final double pulse;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final a in anchors) {
+      _drawPin(canvas, a);
+    }
+  }
+
+  void _drawPin(Canvas canvas, _ArAnchor a) {
+    final isFace = a.kind == _ArAnchorKind.face;
+    final color  = isFace ? _kLens : a.region!.color;
+    final symbol = isFace
+        ? '👤'
+        : a.region!.flags.isEmpty
+            ? '✓'
+            : a.region!.flags.length == 1
+                ? a.region!.flags.first.emoji
+                : '⚠';
+
+    // Pulsing outer glow
+    canvas.drawCircle(
+      a.screenPos,
+      20 + pulse * 6,
+      Paint()
+        ..color = color.withValues(alpha: 0.15 + pulse * 0.10)
+        ..style = PaintingStyle.fill,
+    );
+
+    // Filled circle
+    canvas.drawCircle(
+      a.screenPos, 18,
+      Paint()
+        ..color = color.withValues(alpha: 0.88)
+        ..style = PaintingStyle.fill,
+    );
+
+    // White border
+    canvas.drawCircle(
+      a.screenPos, 18,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.90)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8,
+    );
+
+    // Symbol
+    final tp = TextPainter(
+      text: TextSpan(text: symbol, style: const TextStyle(fontSize: 13, height: 1.0)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, a.screenPos - Offset(tp.width / 2, tp.height / 2));
+
+    // Label below pin
+    final hasLabel = isFace || a.region!.flags.isNotEmpty;
+    if (hasLabel) {
+      final label = isFace
+          ? 'face'
+          : a.region!.flags.length == 1
+              ? a.region!.flags.first.label.split(' ').first
+              : '${a.region!.flags.length} signals';
+      final lp = TextPainter(
+        text: TextSpan(
+          text: ' $label ',
+          style: const TextStyle(
+            fontFamily: 'Montserrat',
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 120);
+
+      final lx = a.screenPos.dx - lp.width / 2;
+      final ly = a.screenPos.dy + 22;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(lx - 2, ly, lp.width + 4, lp.height + 4),
+          const Radius.circular(4),
+        ),
+        Paint()..color = color.withValues(alpha: 0.92),
+      );
+      lp.paint(canvas, Offset(lx, ly + 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ArOverlayPainter old) =>
+      old.pulse != pulse || old.anchors != anchors;
+}
+

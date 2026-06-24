@@ -13,17 +13,23 @@ class QuestService {
   static const _kModel = 'openai/gpt-4o-mini'; // use mini for quests (cost-efficient)
 
   static String _systemPrompt() => '''
-You are a media-literacy educator creating training exercises for teenagers.
-Generate ONE realistic-sounding social media post that uses exactly ONE manipulation technique.
-The post should be 1-4 sentences, realistic, about a current topic (politics, health, environment, technology, celebrity).
+You are a media-literacy educator making quick daily quiz cards for teenagers.
+Generate ONE punchy social media post that uses exactly ONE manipulation technique.
+
+STRICT RULES:
+- post_text: 1-2 sentences MAX. Under 25 words. Sound like a real tweet or caption. Can include 1 hashtag or emoji.
+- options: exactly 4 short labels. Each option is 2-4 words ONLY — no long phrases.
+- topic_emoji: a single emoji that represents the post topic (e.g. 🌍 environment, 🏛️ politics, 💊 health, 📱 tech, ⚽ sports).
+- explanation: 1-2 short sentences only.
 
 Return ONLY valid JSON (no markdown):
 {
-  "post_text": "<the social media post>",
+  "post_text": "<1-2 sentence post, max 25 words>",
   "technique": "<exact technique name>",
-  "options": ["<technique A>", "<technique B>", "<technique C>", "<technique D>"],
+  "topic_emoji": "<single emoji>",
+  "options": ["<2-4 word label>", "<2-4 word label>", "<2-4 word label>", "<2-4 word label>"],
   "correct_index": <0-3>,
-  "explanation": "<2-3 sentences explaining why this is manipulative and how to spot it>",
+  "explanation": "<1-2 short sentences>",
   "difficulty": "<easy|medium|hard>",
   "topic": "<topic category>"
 }
@@ -31,8 +37,7 @@ Return ONLY valid JSON (no markdown):
 Technique must be one of: Fear Appeal, Loaded Language, False Dichotomy, Cherry Picking,
 Bandwagon, Appeal to Authority, Emotional Manipulation, Scapegoating, Us-vs-Them Framing, Sensationalism.
 Options must include the correct technique and 3 plausible-but-wrong alternatives.
-correct_index is the 0-based index of the correct answer in options.
-Difficulty: easy = obvious technique, medium = requires thought, hard = subtle/layered.''';
+correct_index is the 0-based index of the correct answer in options.''';
 
   /// Generates a single quest (social post + 4 options + answer + explanation).
   ///
@@ -101,14 +106,15 @@ Difficulty: easy = obvious technique, medium = requires thought, hard = subtle/l
         : int.tryParse('${rawIndex ?? 0}') ?? 0;
 
     return {
-      'post_text': (quest['post_text'] as String?)?.trim() ?? '',
-      'technique': (quest['technique'] as String?)?.trim() ?? '',
-      'options': options,
+      'post_text':   (quest['post_text']   as String?)?.trim() ?? '',
+      'technique':   (quest['technique']   as String?)?.trim() ?? '',
+      'topic_emoji': (quest['topic_emoji'] as String?)?.trim() ?? '📱',
+      'options':     options,
       'correct_index':
           (correctIndex >= 0 && correctIndex < options.length) ? correctIndex : 0,
       'explanation': (quest['explanation'] as String?)?.trim() ?? '',
-      'difficulty': (quest['difficulty'] as String?)?.trim() ?? difficulty,
-      'topic': (quest['topic'] as String?)?.trim() ?? 'general',
+      'difficulty':  (quest['difficulty']  as String?)?.trim() ?? difficulty,
+      'topic':       (quest['topic']       as String?)?.trim() ?? 'general',
     };
   }
 }

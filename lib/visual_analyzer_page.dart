@@ -318,7 +318,7 @@ class _VisualAnalyzerPageState extends State<VisualAnalyzerPage> {
             ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
             : null,
         boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 4))]
+            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
             : [],
       ),
       child: Padding(
@@ -730,7 +730,7 @@ class _Label extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: _kAccent.withOpacity(0.12),
+        color: _kAccent.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text(text,
@@ -773,7 +773,7 @@ class _ErrorCard extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEF4444).withOpacity(0.12),
+                  color: const Color(0xFFEF4444).withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Icon(
@@ -866,9 +866,9 @@ class _UploadZone extends StatelessWidget {
           // Shimmer the border color while analyzing (0.6 ↔ 1.0 opacity).
           final shimmer = 0.6 + pulseCtrl.value * 0.4;
           final borderColor = analyzing
-              ? _kAccent.withOpacity(shimmer)
+              ? _kAccent.withValues(alpha: shimmer)
               : hasSelected
-                  ? _kAccent.withOpacity(0.4)
+                  ? _kAccent.withValues(alpha: 0.4)
                   : const Color(0xFFCBD5E1);
           return AnimatedContainer(
             duration: const Duration(milliseconds: 200),
@@ -884,7 +884,7 @@ class _UploadZone extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 16,
                     offset: const Offset(0, 4))
               ],
@@ -958,7 +958,7 @@ class _UploadZone extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: _kAccent.withOpacity(0.12),
+                            color: _kAccent.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(100),
                           ),
                           child: Text(_fileExt!,
@@ -1025,7 +1025,7 @@ class _SampleCard extends StatelessWidget {
           border: Border.all(color: const Color(0xFFE2E8F0)),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 8,
                 offset: const Offset(0, 2))
           ],
@@ -1084,7 +1084,7 @@ class _AnalysisProgress extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 20,
               offset: const Offset(0, 6))
         ],
@@ -1100,7 +1100,7 @@ class _AnalysisProgress extends StatelessWidget {
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: _kAccent.withOpacity(0.4 + pulseCtrl.value * 0.6),
+                    color: _kAccent.withValues(alpha: 0.4 + pulseCtrl.value * 0.6),
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1146,7 +1146,7 @@ class _AnalysisProgress extends StatelessWidget {
                       color: isDone
                           ? _kAccent
                           : isCurrent
-                              ? _kAccent.withOpacity(0.15)
+                              ? _kAccent.withValues(alpha: 0.15)
                               : _kBackground,
                       shape: BoxShape.circle,
                       border: isCurrent
@@ -1165,7 +1165,7 @@ class _AnalysisProgress extends StatelessWidget {
                                     height: 6,
                                     decoration: BoxDecoration(
                                       color: _kAccent
-                                          .withOpacity(0.5 + pulseCtrl.value * 0.5),
+                                          .withValues(alpha: 0.5 + pulseCtrl.value * 0.5),
                                       shape: BoxShape.circle,
                                     ),
                                   ),
@@ -1222,7 +1222,7 @@ class _ResultsPanel extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withOpacity(0.07),
+                  color: Colors.black.withValues(alpha: 0.07),
                   blurRadius: 24,
                   offset: const Offset(0, 8))
             ],
@@ -1280,7 +1280,7 @@ class _ResultsPanel extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: sample.verdictColor.withOpacity(0.1),
+                            color: sample.verdictColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(100),
                           ),
                           child: Text(
@@ -1367,7 +1367,7 @@ class _ResultsPanel extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
               boxShadow: [
                 BoxShadow(
-                    color: _kAccent.withOpacity(0.3),
+                    color: _kAccent.withValues(alpha: 0.3),
                     blurRadius: 14,
                     offset: const Offset(0, 6)),
               ],
@@ -1486,7 +1486,7 @@ class _StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text('$count $label',
@@ -1545,7 +1545,7 @@ class _CheckCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(11),
               boxShadow: [
                 BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
+                    color: Colors.black.withValues(alpha: 0.06),
                     blurRadius: 6,
                     offset: const Offset(0, 2))
               ],
@@ -1569,7 +1569,7 @@ class _CheckCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.15),
+                        color: statusColor.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(statusText,
