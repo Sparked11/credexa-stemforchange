@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../app_config.dart';
+import '../data/daily_quest_bank.dart';
 
 /// Generates AI-powered media-literacy quest content via OpenRouter.
 ///
@@ -35,9 +36,20 @@ Return ONLY valid JSON (no markdown):
 }
 
 Technique must be one of: Fear Appeal, Loaded Language, False Dichotomy, Cherry Picking,
-Bandwagon, Appeal to Authority, Emotional Manipulation, Scapegoating, Us-vs-Them Framing, Sensationalism.
+Bandwagon, Appeal to Authority, Emotional Manipulation, Scapegoating, Us-vs-Them Framing,
+Sensationalism, Ad Hominem, Straw Man, Slippery Slope, Whataboutism, Appeal to Nature,
+Hasty Generalization, False Cause, Manufactured Urgency, Gaslighting, False Equivalence,
+Appeal to Tradition.
 Options must include the correct technique and 3 plausible-but-wrong alternatives.
 correct_index is the 0-based index of the correct answer in options.''';
+
+  /// Returns a quest from the local 100-question bank, selected by day of year.
+  /// Never fails — no network required.
+  static Map<String, dynamic> getLocalQuest() {
+    final dayIndex =
+        DateTime.now().difference(DateTime(2024, 1, 1)).inDays;
+    return DailyQuestBank.getForDay(dayIndex);
+  }
 
   /// Generates a single quest (social post + 4 options + answer + explanation).
   ///

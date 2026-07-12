@@ -254,11 +254,16 @@ class _MainAppState extends State<MainApp>
     var quest = await UserProgressService.getCachedQuest();
     if (quest == null) {
       try {
-        quest = await QuestService.generateQuest();
-        await UserProgressService.cacheQuest(quest);
+        // Local bank is instant and works offline; AI is the fallback.
+        quest = QuestService.getLocalQuest();
       } catch (_) {
-        return; // Silently skip if generation fails.
+        try {
+          quest = await QuestService.generateQuest();
+        } catch (_) {
+          return;
+        }
       }
+      await UserProgressService.cacheQuest(quest);
     }
     if (!mounted) return;
     setState(() { _dailyQuestData = quest; _showDailyQuest = true; });
