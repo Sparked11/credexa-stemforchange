@@ -11,6 +11,19 @@ import 'user_progress_service.dart';
 class SyncService {
   SyncService._();
 
+  /// Permanently removes the user's synced document (called during account
+  /// deletion). Best-effort — a network failure never blocks the auth-account
+  /// deletion that follows.
+  static Future<void> deleteUserDoc(String uid) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .delete()
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
   static Future<void> reconcile(String uid) async {
     try {
       final doc = await FirebaseFirestore.instance

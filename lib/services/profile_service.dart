@@ -179,6 +179,19 @@ class ProfileService {
     _afterMutation();
   }
 
+  /// Wipes this user's profile data from local storage and resets in-memory
+  /// state. Used during account deletion (call while still signed in so the
+  /// uid-namespaced keys resolve correctly).
+  static Future<void> clearLocal() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final f in ['photo', 'checks', 'debiases', 'posts', 'quests', 'xp',
+        'bannerTheme']) {
+      await prefs.remove(_key(f));
+    }
+    data.value = const ProfileData();
+    topBadge.value = '🌟';
+  }
+
   static void _refreshTopBadge(ProfileData d) {
     // Walk backwards so we pick the most prestigious earned badge.
     for (final b in kBadges.reversed) {

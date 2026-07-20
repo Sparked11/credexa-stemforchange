@@ -148,6 +148,101 @@ class AuthService {
     _state.value = null;
   }
 
+  /// The sign-in method backing the current account, used by the UI to decide
+  /// whether account deletion needs a password prompt (email) or a re-run of
+  /// the OAuth flow (Google/Apple).
+  static String? get primaryProviderId {
+    final u = fb.FirebaseAuth.instance.currentUser;
+    if (u == null) return null;
+    final ids = u.providerData.map((p) => p.providerId).toList();
+    if (ids.contains('password'))   return 'password';
+    if (ids.contains('google.com')) return 'google.com';
+    if (ids.contains('apple.com'))  return 'apple.com';
+    return ids.isNotEmpty ? ids.first : null;
+  }
+
+  /// Permanently deletes the signed-in user's account and data (App Store
+  /// Guideline 5.1.1(v)). Firebase requires a recent login, so we re-authenticate
+  /// first — email accounts need [password]; Google/Apple re-run their sign-in.
+  /// Community posts are intentionally kept (they display anonymously).
+  /// Throws on failure (wrong password, cancelled re-auth, network) so the UI
+  /// can surface it.
+  static Future<void> deleteAccount({String? password}) async {
+    final user = fb.FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final uid = user.uid;
+
+    await _reauthenticate(user, password: password);
+
+    // Remove cloud + local data while the uid still resolves (auth account is
+    // deleted last).
+    await SyncService.deleteUserDoc(uid);
+    await ProfileService.clearLocal();
+    await UserProgressService.clearLocal();
+
+    await user.delete();
+    _state.value = null;
+  }
+
+  static Future<void> _reauthenticate(fb.User user, {String? password}) async {
+    final ids = user.providerData.map((p) => p.providerId).toList();
+
+    if (ids.contains('password')) {
+      if (password == null || password.isEmpty) {
+        throw fb.FirebaseAuthException(
+            code: 'password-required',
+            message: 'Please enter your password to continue.');
+      }
+      final cred = fb.EmailAuthProvider.credential(
+          email: user.email ?? '', password: password);
+      await user.reauthenticateWithCredential(cred);
+      return;
+    }
+
+    if (ids.contains('google.com')) {
+      if (kIsWeb) {
+        await user.reauthenticateWithPopup(fb.GoogleAuthProvider());
+      } else {
+        final googleUser = await GoogleSignIn().signIn();
+        if (googleUser == null) {
+          throw fb.FirebaseAuthException(
+              code: 'cancelled', message: 'Sign-in was cancelled.');
+        }
+        final googleAuth = await googleUser.authentication;
+        final cred = fb.GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+        await user.reauthenticateWithCredential(cred);
+      }
+      return;
+    }
+
+    if (ids.contains('apple.com')) {
+      if (kIsWeb) {
+        final provider = fb.OAuthProvider('apple.com')
+          ..addScope('email')
+          ..addScope('name');
+        await user.reauthenticateWithPopup(provider);
+      } else {
+        final appleCredential = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+        );
+        final cred = fb.OAuthProvider('apple.com').credential(
+          idToken: appleCredential.identityToken,
+          accessToken: appleCredential.authorizationCode,
+        );
+        await user.reauthenticateWithCredential(cred);
+      }
+      return;
+    }
+    // Unknown provider — attempt deletion without re-auth; user.delete() throws
+    // requires-recent-login if the session is too old.
+  }
+
   static String _nameFromEmail(String email) {
     if (email.isEmpty) return 'User';
     final local = email.split('@').first;

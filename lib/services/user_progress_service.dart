@@ -168,6 +168,19 @@ class UserProgressService {
     }
   }
 
+  /// Wipes this user's progress data from local storage and resets in-memory
+  /// state. Used during account deletion (call while still signed in so the
+  /// uid-namespaced keys resolve correctly).
+  static Future<void> clearLocal() async {
+    final p = await SharedPreferences.getInstance();
+    for (final f in ['mp', 'pt', 'pc', 'qa', 'qc', 'acc_hist', 'last_quest_date',
+        'cached_quest_date', 'cached_quest_json', 'sv_count', 'sv_pos',
+        'sv_comments']) {
+      await p.remove(_k(f));
+    }
+    stats.value = UserProgressStats.zero;
+  }
+
   /// Overwrites local state (memory + SharedPreferences) with a remote snapshot
   /// pulled from Firestore. Does not re-push — called only by [SyncService].
   static Future<void> applyRemote(Map<String, dynamic> remote) async {

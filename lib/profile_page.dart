@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'auth_service.dart';
+import 'legal_page.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 
@@ -187,6 +188,8 @@ class _ProfilePageState extends State<ProfilePage> {
               SliverToBoxAdapter(
                   child: _buildAccount(context, user, joinDateStr)),
               SliverToBoxAdapter(child: _buildSignOut(context)),
+              SliverToBoxAdapter(child: _buildDeleteAccount(context)),
+              SliverToBoxAdapter(child: _buildLegalLink(context)),
               const SliverToBoxAdapter(child: SizedBox(height: 48)),
             ],
           );
@@ -629,6 +632,172 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       ),
     );
+  }
+
+  // ── Terms of Service & Privacy Policy ────────────────────────────────────────
+  Widget _buildLegalLink(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const LegalPage()),
+          );
+        },
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shield_outlined, size: 15, color: muted),
+            const SizedBox(width: 6),
+            Text(
+              'Terms of Service & Privacy Policy',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize:   12.5,
+                fontWeight: FontWeight.w600,
+                color:      muted,
+                decoration: TextDecoration.underline,
+                decorationColor: muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Delete account (App Store Guideline 5.1.1(v)) ────────────────────────────
+  Widget _buildDeleteAccount(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: GestureDetector(
+        onTap: _handleDeleteAccount,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: double.infinity,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'Delete Account',
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize:   13,
+              fontWeight: FontWeight.w700,
+              color:      const Color(0xFFEF4444),
+              decoration: TextDecoration.underline,
+              decorationColor: const Color(0xFFEF4444).withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleDeleteAccount() async {
+    HapticFeedback.mediumImpact();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Account?',
+            style: TextStyle(fontFamily: 'Montserrat', fontWeight: FontWeight.w800)),
+        content: const Text(
+          'This permanently deletes your account, profile, and progress across '
+          'all devices. This cannot be undone.',
+          style: TextStyle(fontFamily: 'Montserrat', height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete',
+                style: TextStyle(
+                    color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // Email/password accounts must re-enter their password to re-authenticate.
+    String? password;
+    if (AuthService.primaryProviderId == 'password') {
+      password = await _promptPassword();
+      if (password == null || !mounted) return;
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      await AuthService.deleteAccount(password: password);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // spinner
+      Navigator.of(context).pop();                      // close profile page
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // spinner
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_deleteErrorText(e)),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  Future<String?> _promptPassword() async {
+    final ctrl = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Password',
+            style: TextStyle(fontFamily: 'Montserrat', fontWeight: FontWeight.w800)),
+        content: TextField(
+          controller: ctrl,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Enter your password'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return (result == null || result.isEmpty) ? null : result;
+  }
+
+  String _deleteErrorText(Object e) {
+    if (e is fb.FirebaseAuthException) {
+      switch (e.code) {
+        case 'wrong-password':
+        case 'invalid-credential':
+          return 'Incorrect password. Your account was not deleted.';
+        case 'password-required':
+          return 'Password required to delete your account.';
+        case 'cancelled':
+          return 'Deletion cancelled.';
+        case 'requires-recent-login':
+          return 'Please sign out, sign in again, then retry.';
+        default:
+          return e.message ?? 'Could not delete account. Please try again.';
+      }
+    }
+    return 'Could not delete account. Please try again.';
   }
 }
 
