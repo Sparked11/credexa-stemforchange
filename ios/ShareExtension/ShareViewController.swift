@@ -3,9 +3,44 @@ import UniformTypeIdentifiers
 
 class ShareViewController: UIViewController {
 
+  private var didStartHandling = false
+
   override func viewDidLoad() {
     super.viewDidLoad()
     view.backgroundColor = .systemBackground
+    setUpLoadingUI()
+  }
+
+  // Brief "Opening Credexa…" placeholder shown while we extract the shared item
+  // and hand off to the host app. A visible view also keeps iOS from treating
+  // the extension as non-interactive during the switch.
+  private func setUpLoadingUI() {
+    let spinner = UIActivityIndicatorView(style: .large)
+    spinner.startAnimating()
+    let label = UILabel()
+    label.text = "Opening Credexa…"
+    label.font = .systemFont(ofSize: 15, weight: .medium)
+    label.textColor = .secondaryLabel
+
+    let stack = UIStackView(arrangedSubviews: [spinner, label])
+    stack.axis = .vertical
+    stack.alignment = .center
+    stack.spacing = 12
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+    ])
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    // Wait until the window is up before opening the host app — the responder
+    // chain (which we walk to reach UIApplication) isn't fully populated in
+    // viewDidLoad. Guarded since viewDidAppear can fire more than once.
+    guard !didStartHandling else { return }
+    didStartHandling = true
     handleSharedContent()
   }
 
@@ -25,7 +60,7 @@ class ShareViewController: UIViewController {
         if !didHandle && provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
           didHandle = true
           group.enter()
-          provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] item, _ in
+          provider.loadItem(forTypeIdentifier: UTType.image.identifier) { item, _ in
             defer { group.leave() }
             var imageData: Data?
             var mime = "image/jpeg"
@@ -88,12 +123,39 @@ class ShareViewController: UIViewController {
       completeRequest()
       return
     }
-    // extensionContext.open is the correct way to launch the host app from a
-    // Share Extension. The old UIResponder-chain trick never finds UIApplication
-    // because extensions run in a separate sandboxed process.
+
+    // NSExtensionContext.open() is only truly supported for Today widgets; from a
+    // Share Extension it returns success=false and does nothing. The reliable path
+    // is to walk the responder chain to the live UIApplication instance — which
+    // DOES exist in the extension's own process — and call its modern open(_:).
+    if openViaResponderChain(url) {
+      // Let the app-switch begin before tearing the extension down; completing
+      // the request too early can hand focus back to the host app and cancel it.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        self?.completeRequest()
+      }
+      return
+    }
+
+    // Fallback so the extension never hangs if the chain walk finds no application.
     extensionContext?.open(url) { [weak self] _ in
       self?.completeRequest()
     }
+  }
+
+  /// Walks the responder chain to the live UIApplication and opens the host app
+  /// via the modern (non-deprecated) open API. Returns true if the open was
+  /// dispatched, false if no UIApplication was found in the chain.
+  private func openViaResponderChain(_ url: URL) -> Bool {
+    var responder: UIResponder? = self
+    while let current = responder {
+      if let application = current as? UIApplication {
+        application.open(url, options: [:], completionHandler: nil)
+        return true
+      }
+      responder = current.next
+    }
+    return false
   }
 
   private func completeRequest() {
