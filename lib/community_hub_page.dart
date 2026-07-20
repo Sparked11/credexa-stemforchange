@@ -67,6 +67,12 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   @override
   void initState() {
     super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await CommunityService.loadModeration();
+    if (!mounted) return;
     _sub = CommunityService.messagesStream().listen(
       (msgs) {
         if (!mounted) return;
@@ -111,6 +117,31 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     _textCtrl.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  // ── Moderation (App Store UGC requirements) ─────────────────────────────────
+  Future<void> _reportMessage(CommunityMessage m) async {
+    // Hide immediately for this viewer; the report also propagates to Firestore
+    // where it auto-hides for everyone once the threshold is reached.
+    setState(() => _messages.removeWhere((x) => x.id == m.id));
+    try {
+      await CommunityService.reportMessage(m.id);
+    } catch (_) {}
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Thanks for reporting. This message is now hidden.'),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  Future<void> _blockUser(String userId) async {
+    await CommunityService.blockUser(userId);
+    if (!mounted) return;
+    setState(() => _messages.removeWhere((x) => x.userId == userId));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text("User blocked. You won't see their messages anymore."),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   Future<void> _pickImage() async {
@@ -343,9 +374,12 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
         if (msgIndex < 0 || msgIndex >= _messages.length) {
           return const SizedBox.shrink();
         }
+        final msg = _messages[msgIndex];
         return _MessageBubble(
-          message:       _messages[msgIndex],
+          message:       msg,
           currentUserId: FirebaseAuth.instance.currentUser?.uid,
+          onReport:      () => _reportMessage(msg),
+          onBlock:       msg.userId != null ? () => _blockUser(msg.userId!) : null,
         );
       },
     );
@@ -678,9 +712,16 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
 //  MESSAGE BUBBLE
 // ─────────────────────────────────────────────────────────────────────────────
 class _MessageBubble extends StatefulWidget {
-  const _MessageBubble({required this.message, required this.currentUserId});
+  const _MessageBubble({
+    required this.message,
+    required this.currentUserId,
+    this.onReport,
+    this.onBlock,
+  });
   final CommunityMessage message;
   final String? currentUserId;
+  final VoidCallback? onReport;
+  final VoidCallback? onBlock;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -772,6 +813,91 @@ class _MessageBubbleState extends State<_MessageBubble>
     } catch (_) {}
   }
 
+  // ── Moderation (report / block) ─────────────────────────────────────────────
+  // Own messages can't be reported/blocked; a message with a userId that isn't
+  // ours can also be blocked (AI messages have no userId → report only).
+  bool get _isOwn =>
+      widget.message.userId != null &&
+      widget.message.userId == widget.currentUserId;
+  bool get _canBlock =>
+      widget.onBlock != null &&
+      widget.message.userId != null &&
+      widget.message.userId != widget.currentUserId;
+
+  // Small "⋯" affordance shown on other people's messages.
+  Widget _moderationButton(Color color) {
+    return GestureDetector(
+      onTap: _showModerationSheet,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Icon(Icons.more_horiz_rounded,
+            size: 15, color: color.withValues(alpha: 0.6)),
+      ),
+    );
+  }
+
+  void _showModerationSheet() {
+    final cs = Theme.of(context).colorScheme;
+    HapticFeedback.lightImpact();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: cs.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 38, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 14),
+            _sheetAction(ctx, Icons.flag_outlined, 'Report message',
+                const Color(0xFFF59E0B), () {
+              Navigator.pop(ctx);
+              widget.onReport?.call();
+            }),
+            if (_canBlock)
+              _sheetAction(ctx, Icons.block_rounded, 'Block this user',
+                  const Color(0xFFEF4444), () {
+                Navigator.pop(ctx);
+                widget.onBlock?.call();
+              }),
+            _sheetAction(ctx, Icons.close_rounded, 'Cancel',
+                cs.onSurface.withValues(alpha: 0.55), () => Navigator.pop(ctx)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetAction(BuildContext ctx, IconData icon, String label,
+      Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 14),
+            Text(label,
+                style: _m(size: 14, weight: FontWeight.w600, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -806,9 +932,16 @@ class _MessageBubbleState extends State<_MessageBubble>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('Anonymous',
-                  style: _m(size: 10, weight: FontWeight.w700,
-                      color: cs.onSurface.withValues(alpha: 0.55))),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!_isOwn)
+                    _moderationButton(cs.onSurface.withValues(alpha: 0.55)),
+                  Text('Anonymous',
+                      style: _m(size: 10, weight: FontWeight.w700,
+                          color: cs.onSurface.withValues(alpha: 0.55))),
+                ],
+              ),
               const SizedBox(height: 4),
               Container(
                 // Tighter padding when image is present so it fills edge-to-edge
@@ -900,8 +1033,14 @@ class _MessageBubbleState extends State<_MessageBubble>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(widget.message.authorLabel,
-                  style: _m(size: 10, weight: FontWeight.w800, color: color)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(widget.message.authorLabel,
+                      style: _m(size: 10, weight: FontWeight.w800, color: color)),
+                  if (!_isOwn) _moderationButton(color),
+                ],
+              ),
               const SizedBox(height: 4),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

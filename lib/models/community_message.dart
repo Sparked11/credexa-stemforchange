@@ -16,6 +16,8 @@ class CommunityMessage {
     this.reactions = const {},
     this.userReactions = const {},
     this.links = const [],
+    this.reportCount = 0,
+    this.reportedBy = const [],
   });
 
   final String id;
@@ -31,6 +33,9 @@ class CommunityMessage {
   final Map<String, String> userReactions;
   // [{title, source, url}] for AI messages
   final List<Map<String, String>> links;
+  // Moderation: number of distinct users who reported this message, and their ids.
+  final int reportCount;
+  final List<String> reportedBy;
 
   bool get isQuestion => type == MessageType.question;
   bool get hasImage   => imageBase64 != null && imageBase64!.isNotEmpty;
@@ -94,6 +99,10 @@ class CommunityMessage {
           'url':    m['url']    as String? ?? '',
         };
       }).where((m) => m['url']!.isNotEmpty).toList(),
+      reportCount: (d['reportCount'] as num?)?.toInt() ?? 0,
+      reportedBy:  (d['reportedBy'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 }

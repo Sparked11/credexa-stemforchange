@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../app_config.dart';
 import '../models/community_message.dart';
 import 'web_search_service.dart';
@@ -13,6 +14,11 @@ const _kModerationModel = 'openai/gpt-4o-mini';          // image safety — rel
 const _kUrl             = 'https://openrouter.ai/api/v1/chat/completions';
 const _kCollection = 'community_hub';
 const _kMaxMessages = 50;
+// A message hidden from everyone once this many distinct users report it, so
+// objectionable content is removed automatically without waiting for a manual
+// review (App Store Review Guideline 1.2).
+const _kReportHideThreshold = 2;
+const _kBlockedKey = 'community_blocked_users';
 
 // Basic profanity word list — whole-word and substring checks combined
 const _kProfanity = <String>[
@@ -25,12 +31,81 @@ const _kProfanity = <String>[
 class CommunityService {
   static final _col = FirebaseFirestore.instance.collection(_kCollection);
 
+  // Locally blocked user ids — messages from these users are hidden on this
+  // device. Loaded once via [loadModeration]; kept in memory for synchronous
+  // filtering in [messagesStream].
+  static final Set<String> _blockedUsers = {};
+
+  /// Loads the device's blocked-user list. Call once at app/hub startup.
+  static Future<void> loadModeration() async {
+    final p = await SharedPreferences.getInstance();
+    _blockedUsers
+      ..clear()
+      ..addAll(p.getStringList(_kBlockedKey) ?? const []);
+  }
+
+  static bool isBlocked(String? userId) =>
+      userId != null && _blockedUsers.contains(userId);
+
+  static List<String> get blockedUsers => _blockedUsers.toList();
+
+  /// Blocks a user so their messages are hidden on this device.
+  static Future<void> blockUser(String userId) async {
+    _blockedUsers.add(userId);
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_kBlockedKey, _blockedUsers.toList());
+  }
+
+  static Future<void> unblockUser(String userId) async {
+    _blockedUsers.remove(userId);
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_kBlockedKey, _blockedUsers.toList());
+  }
+
+  /// Flags a message as objectionable. Records the reporter (so double-reports
+  /// don't inflate the count) and bumps the report counter; once
+  /// [_kReportHideThreshold] distinct users report it, [messagesStream] hides it
+  /// from everyone automatically.
+  static Future<void> reportMessage(String messageId) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final doc = _col.doc(messageId);
+    await FirebaseFirestore.instance.runTransaction((txn) async {
+      final snap = await txn.get(doc);
+      if (!snap.exists) return;
+      final d = snap.data() as Map<String, dynamic>;
+      final reportedBy = <String>{
+        for (final e in (d['reportedBy'] as List<dynamic>? ?? [])) e.toString(),
+      };
+      if (reportedBy.contains(uid)) return; // already reported by this user
+      reportedBy.add(uid);
+      txn.update(doc, {
+        'reportedBy':  reportedBy.toList(),
+        'reportCount': reportedBy.length,
+      });
+    });
+  }
+
+  /// True if a message should be hidden from the current viewer — because they
+  /// blocked its author, it crossed the community report threshold, or they
+  /// personally reported it.
+  static bool isHidden(CommunityMessage m) {
+    if (isBlocked(m.userId)) return true;
+    if (m.reportCount >= _kReportHideThreshold) return true;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null && m.reportedBy.contains(uid)) return true;
+    return false;
+  }
+
   static Stream<List<CommunityMessage>> messagesStream() {
     return _col
         .orderBy('timestamp')
         .limitToLast(_kMaxMessages)
         .snapshots()
-        .map((s) => s.docs.map(CommunityMessage.fromFirestore).toList());
+        .map((s) => s.docs
+            .map(CommunityMessage.fromFirestore)
+            .where((m) => !isHidden(m))
+            .toList());
   }
 
   /// Returns an error string if the text contains profanity/bad content,
