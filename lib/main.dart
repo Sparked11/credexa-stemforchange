@@ -84,12 +84,7 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  AuthService.init();
-  await Future.wait([
-    ProfileService.load(),
-    UserProgressService.load(),
-    AppThemeService.load(),
-  ]);
+  await Future.wait([AuthService.init(), AppThemeService.load()]);
   // Register global profile navigation — used by every ProfileIcon automatically.
   ProfileService.openProfile = (ctx) => Navigator.of(ctx).push(
         MaterialPageRoute(builder: (_) => const ProfilePage()),

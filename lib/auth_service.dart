@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'services/profile_service.dart';
+import 'services/sync_service.dart';
+import 'services/user_progress_service.dart';
 
 // ── User model ────────────────────────────────────────────────────────────────
 class AuthUser {
@@ -27,9 +30,18 @@ class AuthService {
   static AuthUser? get currentUser => _state.value;
   static bool get isLoggedIn => _state.value != null;
 
-  // Listen to Firebase auth state changes so sign-out / token expiry is picked up
-  static void init() {
-    fb.FirebaseAuth.instance.authStateChanges().listen((fbUser) {
+  // Listen to Firebase auth state changes so sign-out / token expiry / account
+  // switching is picked up. Reloads both local services on every emission, and
+  // triggers a cloud reconcile only when the signed-in account actually changes
+  // (not on token-refresh re-emissions of the same uid).
+  static Future<void> init() {
+    final completer = Completer<void>();
+    String? lastUid;
+    fb.FirebaseAuth.instance.authStateChanges().listen((fbUser) async {
+      final uid = fbUser?.uid;
+      final changed = uid != lastUid;
+      lastUid = uid;
+
       if (fbUser == null) {
         _state.value = null;
       } else {
@@ -37,9 +49,19 @@ class AuthService {
           name: fbUser.displayName ?? _nameFromEmail(fbUser.email ?? ''),
           email: fbUser.email ?? '',
         );
-        ProfileService.load(); // hydrate profile icon + stats immediately on login
       }
+
+      // Hydrate both services for whichever uid is now current (or 'anonymous'
+      // defaults on sign-out) — fixes stats staying stale across account switches.
+      await Future.wait([ProfileService.load(), UserProgressService.load()]);
+
+      if (fbUser != null && changed) {
+        unawaited(SyncService.reconcile(uid!));
+      }
+
+      if (!completer.isCompleted) completer.complete();
     });
+    return completer.future;
   }
 
   static Future<void> signInWithEmail(String email, String password) async {

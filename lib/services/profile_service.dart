@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,6 +146,7 @@ class ProfileService {
     final next = data.value.copyWith(photoBase64: base64);
     data.value = next;
     _refreshTopBadge(next);
+    _afterMutation();
   }
 
   // Save the selected banner theme index.
@@ -151,6 +154,7 @@ class ProfileService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_key('bannerTheme'), themeId);
     data.value = data.value.copyWith(bannerThemeId: themeId);
+    _afterMutation();
   }
 
   // Increment a usage counter and persist.
@@ -159,6 +163,7 @@ class ProfileService {
     final current = prefs.getInt(_key(field)) ?? 0;
     await prefs.setInt(_key(field), current + 1);
     await load();
+    _afterMutation();
   }
 
   static Future<void> incrementCheck()     => _increment('checks');
@@ -171,6 +176,7 @@ class ProfileService {
     final current = prefs.getInt(_key('xp')) ?? 0;
     await prefs.setInt(_key('xp'), current + amount);
     await load();
+    _afterMutation();
   }
 
   static void _refreshTopBadge(ProfileData d) {
@@ -182,5 +188,63 @@ class ProfileService {
       }
     }
     topBadge.value = '🌟'; // Welcome badge — always earned.
+  }
+
+  // ── Cloud sync (users/{uid}.profile) ─────────────────────────────────────────
+
+  static void _afterMutation() => unawaited(pushToCloud());
+
+  /// Pushes the current profile snapshot to Firestore. Fire-and-forget: never
+  /// throws into the caller, and a slow/offline network never blocks the UI —
+  /// Firestore's own offline-persistence queue flushes the write on reconnect.
+  static Future<void> pushToCloud() async {
+    final user = fb.FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final d = data.value;
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({
+        'profile': {
+          'photoBase64':   d.photoBase64,
+          'checks':        d.checks,
+          'debiases':      d.debiases,
+          'posts':         d.posts,
+          'quests':        d.quests,
+          'xp':            d.xp,
+          'bannerThemeId': d.bannerThemeId,
+          'updatedAt':     FieldValue.serverTimestamp(),
+        },
+      }, SetOptions(merge: true)).timeout(const Duration(seconds: 8));
+    } catch (_) {
+      // Best-effort — local SharedPreferences remains the source of truth here.
+    }
+  }
+
+  /// Overwrites local state (memory + SharedPreferences) with a remote snapshot
+  /// pulled from Firestore. Does not re-push — called only by [SyncService].
+  static Future<void> applyRemote(Map<String, dynamic> remote) async {
+    final d = ProfileData(
+      photoBase64:   remote['photoBase64'] as String?,
+      checks:        (remote['checks']        as num?)?.toInt() ?? 0,
+      debiases:      (remote['debiases']      as num?)?.toInt() ?? 0,
+      posts:         (remote['posts']         as num?)?.toInt() ?? 0,
+      quests:        (remote['quests']        as num?)?.toInt() ?? 0,
+      xp:            (remote['xp']            as num?)?.toInt() ?? 0,
+      bannerThemeId: (remote['bannerThemeId'] as num?)?.toInt() ?? 0,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    if (d.photoBase64 != null) {
+      await prefs.setString(_key('photo'), d.photoBase64!);
+    }
+    await prefs.setInt(_key('checks'), d.checks);
+    await prefs.setInt(_key('debiases'), d.debiases);
+    await prefs.setInt(_key('posts'), d.posts);
+    await prefs.setInt(_key('quests'), d.quests);
+    await prefs.setInt(_key('xp'), d.xp);
+    await prefs.setInt(_key('bannerTheme'), d.bannerThemeId);
+    data.value = d;
+    _refreshTopBadge(d);
   }
 }

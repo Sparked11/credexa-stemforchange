@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -133,6 +135,63 @@ class UserProgressService {
     await p.setInt(_k('pc'), s.predictionsCorrect);
     await p.setInt(_k('qa'), s.questsAnswered);
     await p.setInt(_k('qc'), s.questsCorrect);
+    stats.value = s;
+    unawaited(pushToCloud(s));
+  }
+
+  // ── Cloud sync (users/{uid}.progress) ────────────────────────────────────────
+
+  /// Pushes the current (or given) stats snapshot to Firestore. Fire-and-forget:
+  /// never throws into the caller, and a slow/offline network never blocks the UI
+  /// — Firestore's own offline-persistence queue flushes the write on reconnect.
+  static Future<void> pushToCloud([UserProgressStats? s]) async {
+    final user = fb.FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final snap = s ?? stats.value;
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({
+        'progress': {
+          'maturityPoints':     snap.maturityPoints,
+          'predictionsTotal':   snap.predictionsTotal,
+          'predictionsCorrect': snap.predictionsCorrect,
+          'questsAnswered':     snap.questsAnswered,
+          'questsCorrect':      snap.questsCorrect,
+          'accuracyHistory':    snap.accuracyHistory,
+          'updatedAt':          FieldValue.serverTimestamp(),
+        },
+      }, SetOptions(merge: true)).timeout(const Duration(seconds: 8));
+    } catch (_) {
+      // Best-effort — local SharedPreferences remains the source of truth here.
+    }
+  }
+
+  /// Overwrites local state (memory + SharedPreferences) with a remote snapshot
+  /// pulled from Firestore. Does not re-push — called only by [SyncService].
+  static Future<void> applyRemote(Map<String, dynamic> remote) async {
+    List<double> hist = [];
+    try {
+      hist = (remote['accuracyHistory'] as List? ?? [])
+          .map((e) => (e as num).toDouble())
+          .toList();
+    } catch (_) {}
+    final s = UserProgressStats(
+      maturityPoints:     (remote['maturityPoints']     as num?)?.toInt() ?? 0,
+      predictionsTotal:   (remote['predictionsTotal']   as num?)?.toInt() ?? 0,
+      predictionsCorrect: (remote['predictionsCorrect'] as num?)?.toInt() ?? 0,
+      questsAnswered:     (remote['questsAnswered']     as num?)?.toInt() ?? 0,
+      questsCorrect:      (remote['questsCorrect']      as num?)?.toInt() ?? 0,
+      accuracyHistory:    hist,
+    );
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_k('mp'), s.maturityPoints);
+    await p.setInt(_k('pt'), s.predictionsTotal);
+    await p.setInt(_k('pc'), s.predictionsCorrect);
+    await p.setInt(_k('qa'), s.questsAnswered);
+    await p.setInt(_k('qc'), s.questsCorrect);
+    await p.setString(_k('acc_hist'), jsonEncode(s.accuracyHistory));
     stats.value = s;
   }
 
