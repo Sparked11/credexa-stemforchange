@@ -1171,11 +1171,16 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                           child: Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: Theme.of(context).brightness == Brightness.dark
+                                  ? const Color(0xFF1E293B)
+                                  : Colors.white,
                               borderRadius: BorderRadius.circular(20),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.05),
+                                  color: Colors.black.withValues(
+                                      alpha: Theme.of(context).brightness == Brightness.dark
+                                          ? 0.25
+                                          : 0.05),
                                   blurRadius: 16,
                                   offset: const Offset(0, 4),
                                 ),
