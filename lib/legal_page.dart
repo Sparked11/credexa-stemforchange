@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 class LegalPage extends StatelessWidget {
   const LegalPage({super.key});
 
-  static const _effectiveDate = 'July 19, 2026';
+  static const _effectiveDate = 'July 29, 2026';
   static const _contactEmail  = 'support@credexa.app';
 
   @override
@@ -104,13 +104,40 @@ class LegalPage extends StatelessWidget {
               '• Content you submit: text, links, and images you provide for '
               'fact-checking, de-biasing, or posting in the Community Hub.'),
 
-          _h('2. How We Use Your Information'),
+          _h('2. Camera, Face Data & the TrueDepth API'),
+          _p('Trust Lens uses your device camera to read on-screen text and to '
+              'locate faces so it can flag possible synthetic or manipulated '
+              'imagery. When you switch Trust Lens to the front camera on a '
+              'device with Face ID hardware, the App starts an ARKit face-tracking '
+              'session, which uses Apple\'s TrueDepth API to supply the camera '
+              'feed.\n'
+              '• We do not collect, record, or use face geometry, depth maps, '
+              'facial expression data, or any faceprint. The App never reads '
+              'ARKit\'s face mesh or blend-shape values, and we do not perform '
+              'face recognition or identification.\n'
+              '• Face detection produces only anonymous on-screen rectangles '
+              '(the position and size of a detected face). These rectangles are '
+              'used solely to draw the live overlay and are discarded frame by '
+              'frame.\n'
+              '• All camera and face processing happens entirely on your device. '
+              'Camera frames, face rectangles, and face data are never uploaded '
+              'to our servers, never stored on the device or in the cloud, never '
+              'retained after the Trust Lens screen closes, and never shared '
+              'with or sold to any third party — including for advertising, '
+              'marketing, or third-party analytics.\n'
+              '• Because no face data is stored or transmitted, there is nothing '
+              'to retain or delete; it exists only in memory while Trust Lens is '
+              'open and is released when you leave the screen.\n'
+              '• Photos you deliberately choose to submit for AI analysis are '
+              'handled under Sections 1 and 4, not under this Section.'),
+
+          _h('3. How We Use Your Information'),
           _p('We use your information to provide and improve the App\'s features, '
               'personalize your experience, sync your progress across devices, '
               'operate the community, and maintain safety through content '
               'moderation.'),
 
-          _h('3. Third-Party Services'),
+          _h('4. Third-Party Services'),
           _p('Credexa relies on trusted third parties to function:\n'
               '• Google Firebase (Authentication and Cloud Firestore) for sign-in '
               'and data storage.\n'
@@ -120,31 +147,31 @@ class LegalPage extends StatelessWidget {
               'Content you submit for analysis may be transmitted to these '
               'providers to generate your results.'),
 
-          _h('4. Data Storage & Security'),
+          _h('5. Data Storage & Security'),
           _p('Your data is stored securely using Google Firebase. We take '
               'reasonable measures to protect it, but no method of transmission or '
               'storage is completely secure.'),
 
-          _h('5. Children\'s Privacy'),
+          _h('6. Children\'s Privacy'),
           _p('Credexa is intended for users 13 and older. We do not knowingly '
               'collect personal information from children under 13. If you believe '
               'a child under 13 has provided us information, contact us and we will '
               'delete it.'),
 
-          _h('6. Your Choices & Rights'),
+          _h('7. Your Choices & Rights'),
           _p('You can review your data in the app and sign out at any time. You '
               'can permanently delete your account and associated data directly '
               'in the app from Profile → Delete Account.'),
 
-          _h('7. Data Sharing'),
+          _h('8. Data Sharing'),
           _p('We do not sell your personal information. We share it only with the '
               'service providers described above, or when required by law.'),
 
-          _h('8. Changes to This Policy'),
+          _h('9. Changes to This Policy'),
           _p('We may update this Privacy Policy periodically. Material changes will '
               'be reflected by updating the effective date above.'),
 
-          _h('9. Contact'),
+          _h('10. Contact'),
           _p('For privacy questions or data requests, contact $_contactEmail.'),
         ],
       ),

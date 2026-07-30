@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -123,22 +125,57 @@ class AuthService {
         email: cred.user!.email ?? '',
       );
     } else {
-      // Native iOS/macOS: use sign_in_with_apple package
-      final appleCredential = await SignInWithApple.getAppleIDCredential(
-        scopes: [
-          AppleIDAuthorizationScopes.email,
-          AppleIDAuthorizationScopes.fullName,
-        ],
-      );
-      final oauthCredential = fb.OAuthProvider('apple.com').credential(
-        idToken: appleCredential.identityToken,
-        accessToken: appleCredential.authorizationCode,
+      // Native iOS/macOS: use sign_in_with_apple package.
+      // Firebase requires a nonce: Apple receives the SHA-256 hash and returns
+      // it inside the identity token; Firebase verifies it against the raw nonce.
+      final rawNonce = _generateNonce();
+      final AuthorizationCredentialAppleID appleCredential;
+      try {
+        appleCredential = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+          nonce: _sha256(rawNonce),
+        );
+      } on SignInWithAppleAuthorizationException catch (e) {
+        // Dismissing the Apple sheet is not an error — match the Google flow
+        // and return quietly instead of surfacing a message.
+        if (e.code == AuthorizationErrorCode.canceled) return;
+        rethrow;
+      }
+      // Must use AppleAuthProvider, not OAuthProvider('apple.com'): the latter
+      // tags the credential with signInMethod 'oauth', which routes the native
+      // plugin down the generic OAuth path and makes Firebase reject an
+      // otherwise-valid token with "Invalid OAuth response from apple.com".
+      final oauthCredential = fb.AppleAuthProvider.credentialWithIDToken(
+        appleCredential.identityToken!,
+        rawNonce,
+        fb.AppleFullPersonName(
+          givenName:  appleCredential.givenName,
+          familyName: appleCredential.familyName,
+        ),
       );
       final cred =
           await fb.FirebaseAuth.instance.signInWithCredential(oauthCredential);
+
+      // Apple only returns the full name on the very first authorization, so
+      // persist it to the Firebase profile while we have it.
+      final fullName = [
+        appleCredential.givenName,
+        appleCredential.familyName,
+      ].whereType<String>().where((s) => s.isNotEmpty).join(' ');
+      if (fullName.isNotEmpty && (cred.user!.displayName ?? '').isEmpty) {
+        await cred.user!.updateDisplayName(fullName);
+        await cred.user!.reload();
+      }
+
+      final user = fb.FirebaseAuth.instance.currentUser ?? cred.user!;
       _state.value = AuthUser(
-        name: cred.user!.displayName ?? 'Apple User',
-        email: cred.user!.email ?? '',
+        name: user.displayName?.isNotEmpty == true
+            ? user.displayName!
+            : (fullName.isNotEmpty ? fullName : 'Apple User'),
+        email: user.email ?? '',
       );
     }
   }
@@ -225,15 +262,31 @@ class AuthService {
           ..addScope('name');
         await user.reauthenticateWithPopup(provider);
       } else {
-        final appleCredential = await SignInWithApple.getAppleIDCredential(
-          scopes: [
-            AppleIDAuthorizationScopes.email,
-            AppleIDAuthorizationScopes.fullName,
-          ],
-        );
-        final cred = fb.OAuthProvider('apple.com').credential(
-          idToken: appleCredential.identityToken,
-          accessToken: appleCredential.authorizationCode,
+        final rawNonce = _generateNonce();
+        final AuthorizationCredentialAppleID appleCredential;
+        try {
+          appleCredential = await SignInWithApple.getAppleIDCredential(
+            scopes: [
+              AppleIDAuthorizationScopes.email,
+              AppleIDAuthorizationScopes.fullName,
+            ],
+            nonce: _sha256(rawNonce),
+          );
+        } on SignInWithAppleAuthorizationException catch (e) {
+          if (e.code == AuthorizationErrorCode.canceled) {
+            throw fb.FirebaseAuthException(
+                code: 'cancelled', message: 'Sign-in was cancelled.');
+          }
+          rethrow;
+        }
+        // AppleAuthProvider, not OAuthProvider — see signInWithApple above.
+        final cred = fb.AppleAuthProvider.credentialWithIDToken(
+          appleCredential.identityToken!,
+          rawNonce,
+          fb.AppleFullPersonName(
+            givenName:  appleCredential.givenName,
+            familyName: appleCredential.familyName,
+          ),
         );
         await user.reauthenticateWithCredential(cred);
       }
@@ -242,6 +295,20 @@ class AuthService {
     // Unknown provider — attempt deletion without re-auth; user.delete() throws
     // requires-recent-login if the session is too old.
   }
+
+  // ── Apple Sign-In nonce helpers ─────────────────────────────────────────────
+  // A cryptographic nonce prevents replay attacks: Apple embeds its SHA-256 hash
+  // in the returned identity token, and Firebase checks it against the raw value.
+  static String _generateNonce([int length = 32]) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List.generate(length, (_) => charset[random.nextInt(charset.length)])
+        .join();
+  }
+
+  static String _sha256(String input) =>
+      sha256.convert(utf8.encode(input)).toString();
 
   static String _nameFromEmail(String email) {
     if (email.isEmpty) return 'User';

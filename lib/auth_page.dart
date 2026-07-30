@@ -131,7 +131,12 @@ class _AuthPageState extends State<AuthPage>
     try {
       await AuthService.signInWithApple();
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() => _error =
+            'Could not complete Sign in with Apple. Please try again, or use '
+            'Google or email to continue.');
+      }
+      debugPrint('Apple sign-in failed: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

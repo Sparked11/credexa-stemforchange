@@ -65,11 +65,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyC_f9niWBwRGBFlL8ngAA67RXCM3fPQEwM',
-    appId: '1:824629614680:ios:25644f524f91279bc9122d',
+    appId: '1:824629614680:ios:bdee431fd58dba4fc9122d',
     messagingSenderId: '824629614680',
     projectId: 'credexa-de0fb',
     storageBucket: 'credexa-de0fb.firebasestorage.app',
-    iosClientId: '824629614680-o95178rol2s07ss751s53tkto3fg49t4.apps.googleusercontent.com',
-    iosBundleId: 'com.example.credexaStemforchange',
+    iosClientId: '824629614680-hot8gooog035591ks5gtqs2ga06k0sa4.apps.googleusercontent.com',
+    iosBundleId: 'com.credexa.stemforchange',
   );
 }

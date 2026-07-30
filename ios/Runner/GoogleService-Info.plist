@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>824629614680-o95178rol2s07ss751s53tkto3fg49t4.apps.googleusercontent.com</string>
+	<string>824629614680-hot8gooog035591ks5gtqs2ga06k0sa4.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.824629614680-o95178rol2s07ss751s53tkto3fg49t4</string>
+	<string>com.googleusercontent.apps.824629614680-hot8gooog035591ks5gtqs2ga06k0sa4</string>
 	<key>API_KEY</key>
 	<string>AIzaSyC_f9niWBwRGBFlL8ngAA67RXCM3fPQEwM</string>
 	<key>GCM_SENDER_ID</key>
@@ -13,7 +13,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.example.credexaStemforchange</string>
+	<string>com.credexa.stemforchange</string>
 	<key>PROJECT_ID</key>
 	<string>credexa-de0fb</string>
 	<key>STORAGE_BUCKET</key>
@@ -29,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:824629614680:ios:25644f524f91279bc9122d</string>
+	<string>1:824629614680:ios:bdee431fd58dba4fc9122d</string>
 </dict>
 </plist>
