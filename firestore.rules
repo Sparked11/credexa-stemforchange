@@ -7,5 +7,13 @@ service cloud.firestore {
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
+    // Moderation reports (App Store Guideline 1.2): any signed-in user may file
+    // a report or block record. Nobody can read or alter them from the client —
+    // they exist so the developer can act on them within 24 hours via the
+    // Firebase console.
+    match /moderation_reports/{reportId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if false;
+    }
   }
 }

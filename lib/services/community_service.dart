@@ -49,11 +49,46 @@ class CommunityService {
 
   static List<String> get blockedUsers => _blockedUsers.toList();
 
-  /// Blocks a user so their messages are hidden on this device.
-  static Future<void> blockUser(String userId) async {
+  /// Blocks a user so their messages are hidden on this device, and notifies
+  /// the developer (App Store Guideline 1.2 requires blocking to both remove
+  /// the content from the feed instantly and report it to us). [messageId] and
+  /// [messageText] identify the content that prompted the block, so it can be
+  /// reviewed and removed within 24 hours.
+  static Future<void> blockUser(String userId,
+      {String? messageId, String? messageText}) async {
     _blockedUsers.add(userId);
     final p = await SharedPreferences.getInstance();
     await p.setStringList(_kBlockedKey, _blockedUsers.toList());
+    await _fileModerationReport(
+      kind: 'block',
+      offendingUserId: userId,
+      messageId: messageId,
+      messageText: messageText,
+    );
+  }
+
+  /// Writes a moderation record the developer can act on. Best-effort: a
+  /// failure here must never stop the block or report from taking effect
+  /// locally, which is what the user sees.
+  static Future<void> _fileModerationReport({
+    required String kind,
+    String? offendingUserId,
+    String? messageId,
+    String? messageText,
+  }) async {
+    try {
+      await FirebaseFirestore.instance.collection('moderation_reports').add({
+        'kind':            kind, // 'report' | 'block'
+        'offendingUserId': offendingUserId,
+        'messageId':       messageId,
+        'messageText':     messageText,
+        'reportedBy':      FirebaseAuth.instance.currentUser?.uid,
+        'createdAt':       FieldValue.serverTimestamp(),
+        'status':          'open',
+      });
+    } catch (_) {
+      // Swallowed deliberately — see doc comment.
+    }
   }
 
   static Future<void> unblockUser(String userId) async {
@@ -66,9 +101,16 @@ class CommunityService {
   /// don't inflate the count) and bumps the report counter; once
   /// [_kReportHideThreshold] distinct users report it, [messagesStream] hides it
   /// from everyone automatically.
-  static Future<void> reportMessage(String messageId) async {
+  static Future<void> reportMessage(String messageId,
+      {String? offendingUserId, String? messageText}) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
+    await _fileModerationReport(
+      kind: 'report',
+      offendingUserId: offendingUserId,
+      messageId: messageId,
+      messageText: messageText,
+    );
     final doc = _col.doc(messageId);
     await FirebaseFirestore.instance.runTransaction((txn) async {
       final snap = await txn.get(doc);

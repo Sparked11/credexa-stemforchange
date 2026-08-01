@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart'; // ignore: unnecessary_import
 import 'auth_service.dart';
+import 'legal_page.dart';
 
 const _kPrimary    = Color(0xFF1E293B);
 const _kSecondary  = Color(0xFF64748B);
@@ -34,6 +36,7 @@ class AuthPage extends StatefulWidget {
 class _AuthPageState extends State<AuthPage>
     with SingleTickerProviderStateMixin {
   bool _isLogin = true;
+  bool _termsAccepted = false;
   bool _loading = false;
   bool _obscurePass = true;
   bool _obscureConfirm = true;
@@ -78,6 +81,7 @@ class _AuthPageState extends State<AuthPage>
   }
 
   Future<void> _submit() async {
+    if (!_requireTermsAccepted()) return;
     setState(() {
       _error = null;
       _loading = true;
@@ -110,6 +114,7 @@ class _AuthPageState extends State<AuthPage>
   }
 
   Future<void> _googleSignIn() async {
+    if (!_requireTermsAccepted()) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -123,7 +128,67 @@ class _AuthPageState extends State<AuthPage>
     }
   }
 
+  /// Every sign-in path must pass this gate. Returns false (and surfaces the
+  /// reason) when the user has not accepted the terms.
+  bool _requireTermsAccepted() {
+    if (_termsAccepted) return true;
+    setState(() => _error =
+        'Please read and accept the Terms of Service and Privacy Policy to continue.');
+    return false;
+  }
+
+  Widget _termsCheckbox() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 24,
+          height: 24,
+          child: Checkbox(
+            value: _termsAccepted,
+            activeColor: _kAccent,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+            onChanged: (v) => setState(() {
+              _termsAccepted = v ?? false;
+              if (_termsAccepted) _error = null;
+            }),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: RichText(
+              text: TextSpan(
+                style: _m(size: 12, weight: FontWeight.w600, color: _kSecondary),
+                children: [
+                  const TextSpan(text: 'I agree to the '),
+                  TextSpan(
+                    text: 'Terms of Service & Privacy Policy',
+                    style: _m(
+                        size: 12, weight: FontWeight.w800, color: _kAccent),
+                    recognizer: TapGestureRecognizer()
+                      ..onTap = () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const LegalPage()),
+                          ),
+                  ),
+                  const TextSpan(
+                      text:
+                          ', and understand that Credexa has zero tolerance for '
+                          'objectionable content or abusive users.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _appleSignIn() async {
+    if (!_requireTermsAccepted()) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -294,6 +359,13 @@ class _AuthPageState extends State<AuthPage>
                           ),
                         ],
                         const SizedBox(height: 20),
+
+                        // EULA gate — App Store Guideline 1.2 requires users to
+                        // agree to terms before registering or signing in, and
+                        // those terms state our zero tolerance for
+                        // objectionable content and abusive users.
+                        _termsCheckbox(),
+                        const SizedBox(height: 16),
 
                         // Primary CTA
                         _PrimaryButton(

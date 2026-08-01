@@ -125,7 +125,8 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     // where it auto-hides for everyone once the threshold is reached.
     setState(() => _messages.removeWhere((x) => x.id == m.id));
     try {
-      await CommunityService.reportMessage(m.id);
+      await CommunityService.reportMessage(m.id,
+          offendingUserId: m.userId, messageText: m.text);
     } catch (_) {}
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -134,8 +135,9 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     ));
   }
 
-  Future<void> _blockUser(String userId) async {
-    await CommunityService.blockUser(userId);
+  Future<void> _blockUser(String userId, {CommunityMessage? from}) async {
+    await CommunityService.blockUser(userId,
+        messageId: from?.id, messageText: from?.text);
     if (!mounted) return;
     setState(() => _messages.removeWhere((x) => x.userId == userId));
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -379,7 +381,9 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
           message:       msg,
           currentUserId: FirebaseAuth.instance.currentUser?.uid,
           onReport:      () => _reportMessage(msg),
-          onBlock:       msg.userId != null ? () => _blockUser(msg.userId!) : null,
+          onBlock:       msg.userId != null
+              ? () => _blockUser(msg.userId!, from: msg)
+              : null,
         );
       },
     );
@@ -824,15 +828,31 @@ class _MessageBubbleState extends State<_MessageBubble>
       widget.message.userId != null &&
       widget.message.userId != widget.currentUserId;
 
-  // Small "⋯" affordance shown on other people's messages.
+  // Report/block affordance shown on other people's messages. Deliberately
+  // labelled and high-contrast rather than a bare "⋯": App Store review has to
+  // be able to find it without guessing (Guideline 1.2).
   Widget _moderationButton(Color color) {
     return GestureDetector(
       onTap: _showModerationSheet,
       behavior: HitTestBehavior.opaque,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Icon(Icons.more_horiz_rounded,
-            size: 15, color: color.withValues(alpha: 0.6)),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.flag_outlined, size: 15, color: color.withValues(alpha: 0.9)),
+            const SizedBox(width: 3),
+            Text(
+              'Report',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color.withValues(alpha: 0.9),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
