@@ -123,7 +123,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   Future<void> _reportMessage(CommunityMessage m) async {
     // Hide immediately for this viewer; the report also propagates to Firestore
     // where it auto-hides for everyone once the threshold is reached.
-    setState(() => _messages.removeWhere((x) => x.id == m.id));
+    setState(() => _removeWithAiReply((x) => x.id == m.id));
     try {
       await CommunityService.reportMessage(m.id,
           offendingUserId: m.userId, messageText: m.text);
@@ -139,11 +139,37 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     await CommunityService.blockUser(userId,
         messageId: from?.id, messageText: from?.text);
     if (!mounted) return;
-    setState(() => _messages.removeWhere((x) => x.userId == userId));
+    setState(() => _removeWithAiReply((x) => x.userId == userId));
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Text("User blocked. You won't see their messages anymore."),
       behavior: SnackBarBehavior.floating,
     ));
+  }
+
+  /// Removes every message matching [shouldRemove], and the AI analysis that
+  /// directly answers it. The answer is a separate document, so dropping the
+  /// question alone would leave its verdict and sources on screen with nothing
+  /// above them. Mirrors CommunityService.applyModeration for the local,
+  /// same-frame hide; the Firestore stream re-applies it on the next snapshot.
+  void _removeWithAiReply(bool Function(CommunityMessage) shouldRemove) {
+    final out = <CommunityMessage>[];
+    var i = 0;
+    while (i < _messages.length) {
+      final m = _messages[i];
+      if (shouldRemove(m)) {
+        if (m.type != MessageType.ai &&
+            i + 1 < _messages.length &&
+            _messages[i + 1].type == MessageType.ai) {
+          i += 2;
+          continue;
+        }
+        i += 1;
+        continue;
+      }
+      out.add(m);
+      i += 1;
+    }
+    _messages = out;
   }
 
   Future<void> _pickImage() async {

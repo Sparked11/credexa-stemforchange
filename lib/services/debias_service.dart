@@ -6,7 +6,7 @@ import '../models/debias_result.dart';
 
 const _kApiKey = kOpenRouterApiKey;
 const _kModel  = 'openai/gpt-4o';
-const _kFallbackModel = 'anthropic/claude-3-5-haiku';
+const _kFallbackModel = 'anthropic/claude-haiku-4.5';
 const _kUrl    = 'https://openrouter.ai/api/v1/chat/completions';
 
 class DebiasService {

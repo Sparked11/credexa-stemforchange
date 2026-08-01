@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'services/community_service.dart';
 import 'services/profile_service.dart';
 import 'services/sync_service.dart';
 import 'services/user_progress_service.dart';
@@ -59,6 +60,14 @@ class AuthService {
 
       if (fbUser != null && changed) {
         unawaited(SyncService.reconcile(uid!));
+      }
+
+      // Blocked-user list is per-account, so reload it whenever the account
+      // actually changes — including sign-out, so the next account doesn't
+      // start out filtering by the previous one's blocks. Fire-and-forget: it
+      // reads a local cache first and must not delay auth.
+      if (changed) {
+        unawaited(CommunityService.loadModeration());
       }
 
       if (!completer.isCompleted) completer.complete();

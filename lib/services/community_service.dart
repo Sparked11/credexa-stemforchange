@@ -31,17 +31,61 @@ const _kProfanity = <String>[
 class CommunityService {
   static final _col = FirebaseFirestore.instance.collection(_kCollection);
 
-  // Locally blocked user ids — messages from these users are hidden on this
-  // device. Loaded once via [loadModeration]; kept in memory for synchronous
+  // Blocked user ids for the signed-in account — messages from these users are
+  // hidden. Loaded via [loadModeration]; kept in memory for synchronous
   // filtering in [messagesStream].
   static final Set<String> _blockedUsers = {};
 
-  /// Loads the device's blocked-user list. Call once at app/hub startup.
+  /// Local cache key, scoped per account so signing in as someone else on a
+  /// shared device doesn't inherit the previous account's blocks. Never falls
+  /// back to the unscoped key: that key is shared by definition, so reading it
+  /// for any account leaks blocks between accounts.
+  static String _blockedKey(String uid) => '$_kBlockedKey.$uid';
+
+  /// Loads the signed-in account's blocked-user list. Call at hub startup, and
+  /// again after an account switch.
+  ///
+  /// Reads the on-device cache first so filtering works instantly and offline,
+  /// then merges the copy stored on the user's Firestore document so blocks
+  /// follow the account to a new device or a reinstall. The merge is a union —
+  /// a block is never silently dropped because one side hadn't synced yet.
   static Future<void> loadModeration() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
     final p = await SharedPreferences.getInstance();
+
+    // Signed out: no account owns any blocks, so filter nothing. Clearing here
+    // also stops one account's list surviving in memory into the next sign-in.
+    if (uid == null) {
+      _blockedUsers.clear();
+      // Retire the pre-scoping key; leaving it would let it be read again.
+      await p.remove(_kBlockedKey);
+      return;
+    }
+
     _blockedUsers
       ..clear()
-      ..addAll(p.getStringList(_kBlockedKey) ?? const []);
+      ..addAll(p.getStringList(_blockedKey(uid)) ?? const <String>[]);
+
+    // Drop the old shared key so no account can pick up another's blocks.
+    await p.remove(_kBlockedKey);
+
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      final remote = <String>{
+        for (final e in (snap.data()?['blockedUsers'] as List<dynamic>? ?? []))
+          e.toString(),
+      };
+      if (!remote.every(_blockedUsers.contains)) {
+        _blockedUsers.addAll(remote);
+        await p.setStringList(_blockedKey(uid), _blockedUsers.toList());
+      }
+    } catch (_) {
+      // Offline or unreachable — the cached list still applies.
+    }
   }
 
   static bool isBlocked(String? userId) =>
@@ -57,14 +101,39 @@ class CommunityService {
   static Future<void> blockUser(String userId,
       {String? messageId, String? messageText}) async {
     _blockedUsers.add(userId);
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(_kBlockedKey, _blockedUsers.toList());
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final p = await SharedPreferences.getInstance();
+      await p.setStringList(_blockedKey(uid), _blockedUsers.toList());
+    }
+    await _syncBlockedUser(uid, userId, blocked: true);
     await _fileModerationReport(
       kind: 'block',
       offendingUserId: userId,
       messageId: messageId,
       messageText: messageText,
     );
+  }
+
+  /// Mirrors a block onto the user's Firestore document so it survives a
+  /// reinstall and follows them to other devices. Best-effort by design: the
+  /// local block has already taken effect, and failing to sync must never
+  /// leave the blocked user visible.
+  static Future<void> _syncBlockedUser(String? uid, String userId,
+      {required bool blocked}) async {
+    if (uid == null) return;
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).set(
+        {
+          'blockedUsers':
+              blocked ? FieldValue.arrayUnion([userId])
+                      : FieldValue.arrayRemove([userId]),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {
+      // Swallowed deliberately — see doc comment.
+    }
   }
 
   /// Writes a moderation record the developer can act on. Best-effort: a
@@ -93,8 +162,12 @@ class CommunityService {
 
   static Future<void> unblockUser(String userId) async {
     _blockedUsers.remove(userId);
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(_kBlockedKey, _blockedUsers.toList());
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final p = await SharedPreferences.getInstance();
+      await p.setStringList(_blockedKey(uid), _blockedUsers.toList());
+    }
+    await _syncBlockedUser(uid, userId, blocked: false);
   }
 
   /// Flags a message as objectionable. Records the reporter (so double-reports
@@ -144,10 +217,37 @@ class CommunityService {
         .orderBy('timestamp')
         .limitToLast(_kMaxMessages)
         .snapshots()
-        .map((s) => s.docs
-            .map(CommunityMessage.fromFirestore)
-            .where((m) => !isHidden(m))
-            .toList());
+        .map((s) =>
+            applyModeration(s.docs.map(CommunityMessage.fromFirestore).toList()));
+  }
+
+  /// Filters a timestamp-ordered list down to what this viewer may see.
+  ///
+  /// An AI analysis is stored as its own document, one second after the question
+  /// it answers. Hiding only the question would strand the answer — sources and
+  /// all — under no question at all, so a hidden question takes the AI reply
+  /// that directly follows it with it.
+  static List<CommunityMessage> applyModeration(
+      List<CommunityMessage> ordered) {
+    final out = <CommunityMessage>[];
+    var i = 0;
+    while (i < ordered.length) {
+      final m = ordered[i];
+      if (isHidden(m)) {
+        // Skip the message, plus its AI answer when this was a question.
+        if (m.type != MessageType.ai &&
+            i + 1 < ordered.length &&
+            ordered[i + 1].type == MessageType.ai) {
+          i += 2;
+          continue;
+        }
+        i += 1;
+        continue;
+      }
+      out.add(m);
+      i += 1;
+    }
+    return out;
   }
 
   /// Returns an error string if the text contains profanity/bad content,
@@ -504,14 +604,22 @@ Rules:
 
     // Images: use fast GPT-4o models — smaller payload, no scraping, reliable multimodal.
     // Text:   try Claude Sonnet first for richer reasoning, fall back to GPT-4o.
+    // Model ids must match OpenRouter's catalog exactly; a retired id 404s and
+    // silently falls through to the next candidate.
+    // Claude leads on images: GPT-4o intermittently refuses to analyse photos of
+    // real political figures, which is exactly the misinformation this feature
+    // exists to check. Refusals fall through to the next candidate below.
     final candidates = hasImage
-        ? const ['openai/gpt-4o', 'openai/gpt-4o-mini']
+        ? const [
+            'anthropic/claude-sonnet-5',
+            'openai/gpt-4o',
+            'openai/gpt-4o-mini',
+          ]
         : const [
-            'anthropic/claude-3.5-sonnet',
-            'anthropic/claude-3-5-sonnet',
+            'anthropic/claude-sonnet-5',
             'openai/gpt-4o',
           ];
-    final timeoutSecs = hasImage ? 30 : 55;
+    final timeoutSecs = hasImage ? 45 : 55;
 
     for (final model in candidates) {
       try {
@@ -546,12 +654,35 @@ Rules:
                 .map((c) => (c as Map)['text'] as String? ?? '')
                 .join('');
 
-        if (text.trim().isNotEmpty) return text.trim();
+        final out = text.trim();
+        // A refusal is a 200 OK with useless prose ("I'm sorry, I can't help
+        // with that."). Treat it like a failure so the next candidate gets a
+        // turn instead of the refusal being shown to the user as the verdict.
+        if (out.isNotEmpty && !_looksLikeRefusal(out)) return out;
       } catch (_) {
         continue; // network/parse error — try next model
       }
     }
 
     throw Exception('all models failed');
+  }
+
+  /// True when a model declined instead of answering. Deliberately narrow: only
+  /// short replies count, so a real fact-check that happens to quote "I'm sorry"
+  /// is never discarded.
+  static bool _looksLikeRefusal(String text) {
+    if (text.length > 240) return false;
+    final t = text.toLowerCase();
+    const markers = [
+      "i'm sorry, i can't",
+      "i'm sorry, but i can't",
+      "i cannot help with that",
+      "i can't help with that",
+      "i'm unable to help",
+      "i can't assist with that",
+      "i cannot assist with that",
+      "unable to assist with that",
+    ];
+    return markers.any((m) => t.contains(m));
   }
 }
