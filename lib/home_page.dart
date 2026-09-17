@@ -38,7 +38,7 @@ TextStyle _m({
       letterSpacing: spacing,
     );
 
-// ── Press-animation button wrapper ────────────────────────────────────────────
+// ── Press-animation button wrapper check ────────────────────────────────────────────
 class _PressBtn extends StatefulWidget {
   const _PressBtn({required this.child, this.onTap});
   final Widget child;
