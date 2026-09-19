@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'models/news_article.dart';
 import 'services/article_reader_service.dart';
+import 'services/connectivity_service.dart';
 import 'theme/app_tokens.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/glass_button.dart';
@@ -431,6 +432,21 @@ class _FallbackBody extends StatelessWidget {
                 ),
               ),
             ),
+          ValueListenableBuilder<bool>(
+            valueListenable: ConnectivityService.online,
+            builder: (context, online, _) => _buildNotice(context, !online),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotice(BuildContext context, bool offline) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -444,12 +460,18 @@ class _FallbackBody extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.info_outline_rounded,
-                        color: AppColors.amber, size: 20),
+                    Icon(
+                        offline
+                            ? Icons.wifi_off_rounded
+                            : Icons.info_outline_rounded,
+                        color: AppColors.amber,
+                        size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Full text unavailable here',
+                        offline
+                            ? "You're offline"
+                            : 'Full text unavailable here',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 13,
@@ -462,7 +484,9 @@ class _FallbackBody extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '$domain may block in-app reading or require a subscription. You can retry or read the full article on their site.',
+                  offline
+                      ? '$kOfflineMessage The full article will load once you are back online.'
+                      : '$domain may block in-app reading or require a subscription. You can retry or read the full article on their site.',
                   style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 12,
@@ -479,9 +503,7 @@ class _FallbackBody extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+      ],
     );
   }
 }

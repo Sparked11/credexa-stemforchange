@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/analysis_result.dart';
 import 'services/analysis_service.dart';
+import 'services/connectivity_service.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/glass_button.dart';
 
@@ -2494,6 +2495,7 @@ class _RegionSheetState extends State<_RegionSheet> {
   Future<void> _runAnalysis() async {
     setState(() { _analyzing = true; _error = null; });
     try {
+      if (!await ConnectivityService.check()) throw const SocketException('offline');
       final r = await AnalysisService.analyzeWithSearch(widget.region.text);
       if (mounted) setState(() { _result = r; _analyzing = false; });
     } catch (e) {

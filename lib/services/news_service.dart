@@ -4,6 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/news_article.dart';
 
 class NewsService {
+  /// True when the last result came from an old cache because the network failed.
+  static bool servedStale = false;
+
   static const _baseUrl = 'https://credexa-tawny.vercel.app/api/news';
   static const _cacheTtl = Duration(hours: 24);
 
@@ -46,6 +49,7 @@ class NewsService {
     }
 
     // Fetch fresh from backend
+    Object failure = Exception('News is unavailable right now.');
     try {
       final uri = Uri.parse('$_baseUrl?category=$category&pageSize=$pageSize');
       final response = await http.get(uri).timeout(const Duration(seconds: 15));
@@ -58,13 +62,21 @@ class NewsService {
         await prefs.setString(
             cacheKey, jsonEncode(articles.map((a) => a.toJson()).toList()));
         await prefs.setString(tsKey, DateTime.now().toIso8601String());
+        servedStale = false;
         return articles;
       }
-    } catch (_) {}
+      failure = Exception('News service returned ${response.statusCode}');
+    } catch (e) {
+      failure = e;
+    }
 
-    // Fall back to stale cache rather than crashing
-    if (cachedJson != null) return _parseList(cachedJson);
-    return [];
+    // Fall back to stale cache rather than failing, but let the UI say so.
+    if (cachedJson != null) {
+      servedStale = true;
+      return _parseList(cachedJson);
+    }
+    servedStale = false;
+    throw failure;
   }
 
   static List<NewsArticle> _parseList(String json) {

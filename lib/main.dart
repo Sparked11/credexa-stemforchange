@@ -34,6 +34,8 @@ import 'widgets/scroll_journey.dart';
 import 'widgets/glass_button.dart';
 import 'widgets/maturity_levels_sheet.dart';
 import 'widgets/achievement_toast.dart';
+import 'widgets/offline_banner.dart';
+import 'services/connectivity_service.dart';
 import 'services/achievement_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,6 +260,7 @@ class _MainAppState extends State<MainApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ConnectivityService.start();
     _achievementSub = AchievementService.stream.listen((a) {
       if (!mounted) return;
       AchievementToaster.enqueue(
@@ -343,7 +346,10 @@ class _MainAppState extends State<MainApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _checkSharedContent();
+    if (state == AppLifecycleState.resumed) {
+      _checkSharedContent();
+      ConnectivityService.check();
+    }
   }
 
   @override
@@ -550,6 +556,12 @@ class _MainAppState extends State<MainApp>
                           if (mounted) setState(() => _showCredexaAd = false);
                         },
                       ),
+                    Positioned(
+                      left: 20,
+                      right: 20,
+                      bottom: navBottom + _navHeight + 12,
+                      child: const OfflineBanner(),
+                    ),
                     Positioned(
                       left: 20,
                       right: 20,
@@ -2468,61 +2480,17 @@ class _NewsPageState extends State<NewsPage> {
             future: _newsArticles,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 40),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          const Color(0xFF22C55E).withValues(alpha: 0.7),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
+                return const SliverToBoxAdapter(child: _NewsSkeleton());
               } else if (snapshot.hasError) {
                 return SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        const Icon(
-                          Icons.error_outline_rounded,
-                          size: 48,
-                          color: Color(0xFFF59E0B),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Oops! Unable to load news',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontFamily: 'Montserrat',
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1E293B),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          friendlyError(snapshot.error),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontFamily: 'Montserrat',
-                            fontSize: 12,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        GlassButton(
-                          label: 'Retry',
-                          icon: Icons.refresh_rounded,
-                          expand: false,
-                          height: 46,
-                          radius: 14,
-                          haptic: GlassHaptic.none,
-                          onTap: () => _changeCategory(_selectedCategory),
-                        ),
-                      ],
+                    padding: const EdgeInsets.only(top: 12),
+                    child: AppErrorCard(
+                      title: isOfflineError(snapshot.error)
+                          ? "You're offline"
+                          : 'Unable to load news',
+                      message: friendlyError(snapshot.error),
+                      onRetry: () => _changeCategory(_selectedCategory),
                     ),
                   ),
                 );
@@ -2531,30 +2499,35 @@ class _NewsPageState extends State<NewsPage> {
               final articles = snapshot.data ?? [];
               if (articles.isEmpty) {
                 return SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 40),
-                    child: Center(
-                      child: Text(
-                        'No articles found',
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 14,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                    ),
+                  child: EmptyState(
+                    icon: Icons.newspaper_rounded,
+                    color: const Color(0xFFF59E0B),
+                    title: 'No stories here yet',
+                    message: _selectedCategory == 'general'
+                        ? 'There are no articles right now. Check back soon.'
+                        : 'There are no $_selectedCategory articles right now. Try another category.',
+                    actionLabel: _selectedCategory == 'general'
+                        ? 'Refresh'
+                        : 'Show general news',
+                    onAction: () => _changeCategory('general'),
                   ),
                 );
               }
 
-              return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final article = articles[index];
-                    return _NewsArticleCard(article: article);
-                  },
-                  childCount: articles.length,
-                ),
+              return SliverMainAxisGroup(
+                slivers: [
+                  if (NewsService.servedStale)
+                    const SliverToBoxAdapter(child: _StaleNewsNotice()),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final article = articles[index];
+                        return _NewsArticleCard(article: article);
+                      },
+                      childCount: articles.length,
+                    ),
+                  ),
+                ],
               );
             },
           ),
@@ -4327,6 +4300,114 @@ class _BrandSplash extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+
+class _StaleNewsNotice extends StatelessWidget {
+  const _StaleNewsNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppColors.amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.amber.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, size: 18, color: AppColors.amber),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Showing saved stories. Reconnect to see the latest news.',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.4,
+                color: cs.onSurface.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NewsSkeleton extends StatefulWidget {
+  const _NewsSkeleton();
+
+  @override
+  State<_NewsSkeleton> createState() => _NewsSkeletonState();
+}
+
+class _NewsSkeletonState extends State<_NewsSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1100))
+    ..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.onSurface;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) {
+        final a = 0.06 + 0.06 * _c.value;
+        Widget bar(double w, double h) => Container(
+              width: w,
+              height: h,
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: base.withValues(alpha: a),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            );
+        return Column(
+          children: [
+            for (var i = 0; i < 3; i++)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: base.withValues(alpha: 0.08)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 140,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: base.withValues(alpha: a),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    bar(120, 12),
+                    bar(double.infinity, 16),
+                    bar(220, 16),
+                    bar(160, 11),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
+import 'services/connectivity_service.dart';
 import 'services/profile_service.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/glass_button.dart';
@@ -179,6 +180,16 @@ class _ElectionIntegrityPageState extends State<ElectionIntegrityPage> {
       _activeTab = 0;
     });
 
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = kOfflineMessage;
+      });
+      return;
+    }
+    if (!mounted) return;
+
     try {
       final data = await _fetchPoliticianData(name);
       if (!mounted) return;
@@ -244,7 +255,7 @@ class _ElectionIntegrityPageState extends State<ElectionIntegrityPage> {
   ]
 }
 
-Include exactly 5 promises and 5 votes on major, real legislation. Only use verifiable public record information.'''
+Include exactly 5 promises and 5 votes on major, real legislation. Only use verifiable public record information. If "$name" is not a recognizable elected official or public figure, return empty "promises" and "votes" arrays.'''
               },
             ],
             'max_tokens': 1400,
@@ -426,7 +437,31 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
                   ? null
                   : () => _selectPolitician(_selectedName!),
             ),
-          if (_data != null && !_loading)
+          if (_data != null && !_loading && _data!.promises.isEmpty && _data!.votes.isEmpty)
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: cs.outlineVariant),
+              ),
+              child: EmptyState(
+                icon: Icons.person_search_rounded,
+                color: _kBlue,
+                title: 'No record found',
+                message:
+                    'We could not find a public record for "${_data!.name}". Check the spelling or try the full name of an elected official.',
+                actionLabel: 'Try another name',
+                onAction: () {
+                  _searchCtrl.clear();
+                  setState(() {
+                    _data = null;
+                    _selectedName = null;
+                  });
+                },
+              ),
+            ),
+          if (_data != null && !_loading && (_data!.promises.isNotEmpty || _data!.votes.isNotEmpty))
             _PoliticianView(
               data: _data!,
               activeTab: _activeTab,
@@ -452,6 +487,17 @@ class _SearchBar extends StatelessWidget {
   final TextEditingController ctrl;
   final ValueChanged<String> onSubmit;
 
+  void _submit(BuildContext context, String v) {
+    if (v.trim().isNotEmpty) {
+      onSubmit(v.trim());
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+          content: Text('Type a politician\'s name to search.')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -469,9 +515,7 @@ class _SearchBar extends StatelessWidget {
       child: TextField(
         controller: ctrl,
         textInputAction: TextInputAction.search,
-        onSubmitted: (v) {
-          if (v.trim().isNotEmpty) onSubmit(v.trim());
-        },
+        onSubmitted: (v) => _submit(context, v),
         style: _m(size: 14, weight: FontWeight.w600, color: cs.onSurface),
         decoration: InputDecoration(
           hintText: 'Search any politician by name…',
@@ -492,9 +536,7 @@ class _SearchBar extends StatelessWidget {
                 height: 44,
                 radius: 13,
                 padding: EdgeInsets.zero,
-                onTap: () {
-                  if (ctrl.text.trim().isNotEmpty) onSubmit(ctrl.text.trim());
-                },
+                onTap: () => _submit(context, ctrl.text),
               ),
             ),
           ),
@@ -998,6 +1040,15 @@ class _PromiseTracker extends StatelessWidget {
     final broken =
         data.promises.where((p) => p.status == _PromiseStatus.unfulfilled).length;
 
+    if (data.promises.isEmpty) {
+      return const EmptyState(
+        compact: true,
+        icon: Icons.fact_check_outlined,
+        color: _kBlue,
+        title: 'No promises on record',
+        message: 'We could not find tracked campaign promises for this official.',
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1269,6 +1320,15 @@ class _VotingRecord extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (data.votes.isEmpty) {
+      return const EmptyState(
+        compact: true,
+        icon: Icons.how_to_vote_outlined,
+        color: _kBlue,
+        title: 'No votes on record',
+        message: 'We could not find a voting record for this official.',
+      );
+    }
     return Column(
       children: data.votes
           .map((v) => Padding(

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart'; // ignore: unnecessary_import
 import 'auth_service.dart';
+import 'services/connectivity_service.dart';
 import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
 import 'legal_page.dart';
 import 'widgets/glass_button.dart';
 
@@ -99,6 +101,7 @@ class _AuthPageState extends State<AuthPage>
         if (_emailCtrl.text.trim().isEmpty || _passCtrl.text.isEmpty) {
           throw 'Please enter your email and password.';
         }
+        if (!await ConnectivityService.check()) throw kOfflineMessage;
         await AuthService.signInWithEmail(
             _emailCtrl.text.trim(), _passCtrl.text);
       } else {
@@ -110,11 +113,14 @@ class _AuthPageState extends State<AuthPage>
         if (_passCtrl.text != _confirmCtrl.text) {
           throw 'Passwords do not match.';
         }
+        if (!await ConnectivityService.check()) throw kOfflineMessage;
         await AuthService.createAccount(
             _nameCtrl.text.trim(), _emailCtrl.text.trim(), _passCtrl.text);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() => _error = isOfflineError(e) ? kOfflineMessage : e.toString());
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -127,9 +133,12 @@ class _AuthPageState extends State<AuthPage>
       _error = null;
     });
     try {
+      if (!await ConnectivityService.check()) throw kOfflineMessage;
       await AuthService.signInWithGoogle();
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() => _error = isOfflineError(e) ? kOfflineMessage : e.toString());
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -266,12 +275,14 @@ class _AuthPageState extends State<AuthPage>
       _error = null;
     });
     try {
+      if (!await ConnectivityService.check()) throw kOfflineMessage;
       await AuthService.signInWithApple();
     } catch (e) {
       if (mounted) {
-        setState(() => _error =
-            'Could not complete Sign in with Apple. Please try again, or use '
-            'Google or email to continue.');
+        setState(() => _error = (e == kOfflineMessage || isOfflineError(e))
+            ? kOfflineMessage
+            : 'Could not complete Sign in with Apple. Please try again, or use '
+                'Google or email to continue.');
       }
       debugPrint('Apple sign-in failed: $e');
     } finally {

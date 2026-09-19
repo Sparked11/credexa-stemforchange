@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'auth_service.dart';
 import 'bias_fingerprint.dart';
 import 'models/debias_result.dart';
+import 'services/connectivity_service.dart';
 import 'services/debias_service.dart';
 import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
@@ -312,6 +313,17 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
 
   Future<void> _extractAndRewriteUrl(String url) async {
     setState(() { _rewriting = true; _showResults = false; _error = null; });
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() {
+        _textCtrl.text = url;
+        _rewriting = false;
+        _error = kOfflineMessage;
+        _errorRetry = () => _extractAndRewriteUrl(url);
+      });
+      return;
+    }
+    if (!mounted) return;
     try {
       final extracted = await OcrService.extractFromUrl(url);
       if (!mounted) return;
@@ -402,7 +414,13 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
   Future<void> _rewrite() async {
     final text = _textCtrl.text.trim();
     final hasImage = _imageBytes != null;
-    if (text.isEmpty && !hasImage) return;
+    if (text.isEmpty && !hasImage) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+            content: Text('Paste some text or add a screenshot to rewrite.')));
+      return;
+    }
     if (text.length > 4000) {
       setState(() { _error = 'Text is too long. Please shorten it to under 4,000 characters.'; _errorRetry = null; });
       return;
@@ -417,6 +435,16 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
     });
     _resultsCtrl.reset();
 
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() {
+        _rewriting = false;
+        _error = kOfflineMessage;
+        _errorRetry = _rewrite;
+      });
+      return;
+    }
+    if (!mounted) return;
     try {
       final DebiasResult result;
       if (hasImage) {
@@ -881,6 +909,16 @@ class _ResultsPanel extends StatelessWidget {
                       child: _ChangeRow(item: e.value),
                     ))
                 .toList(),
+          ),
+          const SizedBox(height: 16),
+        ] else ...[
+          const EmptyState(
+            compact: true,
+            icon: Icons.check_circle_outline_rounded,
+            color: AppColors.green,
+            title: 'No bias patterns found',
+            message:
+                'This text already reads as fairly neutral, so there was little to change.',
           ),
           const SizedBox(height: 16),
         ],

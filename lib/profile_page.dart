@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'auth_service.dart';
 import 'legal_page.dart';
+import 'services/connectivity_service.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 import 'theme/app_tokens.dart';
@@ -99,6 +100,19 @@ class _ProfilePageState extends State<ProfilePage> {
     ProfileService.load();
   }
 
+  /// Shows the offline message when offline (or [error] is a network error),
+  /// otherwise [fallback].
+  void _showOfflineSnack({String? fallback, Object? error}) {
+    if (!mounted) return;
+    final offline = !ConnectivityService.online.value || isOfflineError(error);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(offline ? kOfflineMessage : (fallback ?? kOfflineMessage)),
+        behavior: SnackBarBehavior.floating,
+      ));
+  }
+
   // ── Photo change ─────────────────────────────────────────────────────────────
 
   Future<void> _changePhoto() async {
@@ -125,12 +139,10 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() => _uploadingPhoto = true);
     try {
       await ProfileService.setPhoto(base64Encode(bytes));
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Could not save photo. Try again.'),
-          behavior: SnackBarBehavior.floating,
-        ));
+        _showOfflineSnack(
+            fallback: 'Could not save photo. Try again.', error: e);
       }
     } finally {
       if (mounted) setState(() => _uploadingPhoto = false);
@@ -148,7 +160,15 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (_) => _BannerPickerSheet(
         currentId: ProfileService.data.value.bannerThemeId,
         onSelect: (id) async {
-          await ProfileService.setBannerTheme(id);
+          try {
+            await ProfileService.setBannerTheme(id);
+          } catch (_) {
+            if (mounted) {
+              _showOfflineSnack(
+                  fallback: 'Could not change banner. Try again.');
+            }
+            return;
+          }
           if (mounted) Navigator.pop(context);
         },
       ),
@@ -936,6 +956,12 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (confirmed != true || !mounted) return;
 
+    if (!await ConnectivityService.check()) {
+      _showOfflineSnack();
+      return;
+    }
+    if (!mounted) return;
+
     // Email/password accounts must re-enter their password to re-authenticate.
     String? password;
     if (AuthService.primaryProviderId == 'password') {
@@ -1008,6 +1034,7 @@ class _ProfilePageState extends State<ProfilePage> {
           return e.message ?? 'Could not delete account. Please try again.';
       }
     }
+    if (isOfflineError(e)) return kOfflineMessage;
     return 'Could not delete account. Please try again.';
   }
 }
@@ -1858,18 +1885,37 @@ class _AccuracyGraphCardState extends State<_AccuracyGraphCard>
           if (history.length < 2)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 14),
-              child: Center(
-                child: Text(
-                  'Make predictions on claims to track your growth here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'Montserrat',
-                    fontSize:   11,
-                    fontWeight: FontWeight.w500,
-                    color:      Colors.white.withValues(alpha: 0.7),
-                    height:     1.5,
+              child: Column(
+                children: [
+                  IconBadge(
+                      icon: Icons.show_chart_rounded,
+                      color: const Color(0xFF4ADE80),
+                      size: 44),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Make your first prediction to start your accuracy graph',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize:   12,
+                      fontWeight: FontWeight.w700,
+                      color:      Colors.white.withValues(alpha: 0.9),
+                      height:     1.5,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Predict whether claims are real, then see your growth here.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize:   11,
+                      fontWeight: FontWeight.w500,
+                      color:      Colors.white.withValues(alpha: 0.7),
+                      height:     1.5,
+                    ),
+                  ),
+                ],
               ),
             )
           else

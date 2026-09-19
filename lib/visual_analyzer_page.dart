@@ -494,6 +494,14 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
   }
 
   Future<void> _analyzeFile(Uint8List bytes, String fileName) async {
+    if (bytes.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _apiError = 'That image appears to be empty. Try a different photo (JPG, PNG or WEBP).';
+        _retry = _pickFile;
+      });
+      return;
+    }
     setState(() {
       _uploadedFileName = fileName;
       _photoBytes = bytes;

@@ -11,6 +11,7 @@ import 'auth_service.dart';
 import 'bias_fingerprint.dart';
 import 'models/analysis_result.dart';
 import 'services/analysis_service.dart';
+import 'services/connectivity_service.dart';
 import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
 import 'services/shared_content_router.dart';
@@ -284,6 +285,16 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
 
   Future<void> _extractAndScanUrl(String url) async {
     setState(() { _scanning = true; _showResults = false; _error = null; });
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() {
+        _textCtrl.text = url;
+        _scanning = false;
+        _error = kOfflineMessage;
+      });
+      return;
+    }
+    if (!mounted) return;
     try {
       final extracted = await OcrService.extractFromUrl(url);
       if (!mounted) return;
@@ -321,9 +332,18 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1920);
-    if (picked == null || !mounted) return;
-    final bytes = await picked.readAsBytes();
+    final XFile picked;
+    final Uint8List bytes;
+    try {
+      final f = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1920);
+      if (f == null || !mounted) return;
+      picked = f;
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not open your photo library. Check Photos access in Settings and try again.');
+      return;
+    }
     setState(() {
       _imageBytes = bytes;
       _imageMimeType = picked.mimeType ?? 'image/jpeg';
@@ -335,9 +355,18 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
 
   Future<void> _takePhoto() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 1920);
-    if (picked == null || !mounted) return;
-    final bytes = await picked.readAsBytes();
+    final XFile picked;
+    final Uint8List bytes;
+    try {
+      final f = await picker.pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 1920);
+      if (f == null || !mounted) return;
+      picked = f;
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Camera is unavailable. Enable camera access in Settings, then try again.');
+      return;
+    }
     setState(() {
       _imageBytes = bytes;
       _imageMimeType = picked.mimeType ?? 'image/jpeg';
@@ -352,7 +381,13 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
   Future<void> _scan() async {
     final text = _textCtrl.text.trim();
     final hasImage = _imageBytes != null;
-    if (text.isEmpty && !hasImage) return;
+    if (text.isEmpty && !hasImage) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+            content: Text('Paste a headline or claim, or add a screenshot, to get started.')));
+      return;
+    }
     if (text.length > 4000) {
       setState(() => _error = 'Claim is too long. Please shorten it to under 4,000 characters.');
       return;
@@ -366,6 +401,12 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
       _predictionCorrect = null;
     });
     _resultsCtrl.reset();
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() { _scanning = false; _error = kOfflineMessage; });
+      return;
+    }
+    if (!mounted) return;
     try {
       final AnalysisResult result;
       if (hasImage) {
@@ -1330,6 +1371,7 @@ class _ResultsPanelState extends State<_ResultsPanel> {
   bool _sourcesExpanded = false;
   bool _loadingSources = false;
   bool _sourcesError = false;
+  bool _sourcesEmpty = false;
   Object? _sourcesErr;
   bool _debateMode = false;
   List<({String title, String url, String description})> _sources = [];
@@ -1348,11 +1390,21 @@ class _ResultsPanelState extends State<_ResultsPanel> {
 
     // Expand
     HapticFeedback.mediumImpact();
-    setState(() { _sourcesExpanded = true; _sourcesError = false; });
+    setState(() { _sourcesExpanded = true; _sourcesError = false; _sourcesEmpty = false; });
     if (_sources.isNotEmpty) return; // Already fetched, just re-expand
 
     // Fetch sources
     setState(() => _loadingSources = true);
+    if (!await ConnectivityService.check()) {
+      if (!mounted) return;
+      setState(() {
+        _loadingSources = false;
+        _sourcesError = true;
+        _sourcesErr = kOfflineMessage;
+      });
+      return;
+    }
+    if (!mounted) return;
     try {
       final q = widget.query.isNotEmpty ? widget.query : widget.result.synthesis.summary;
       final resp = await http.post(
@@ -1398,7 +1450,7 @@ class _ResultsPanelState extends State<_ResultsPanel> {
           .toList();
       if (!mounted) return;
       if (parsed.isEmpty) {
-        setState(() { _loadingSources = false; _sourcesError = true; });
+        setState(() { _loadingSources = false; _sourcesEmpty = true; });
         return;
       }
       setState(() { _sources = parsed; _loadingSources = false; });
@@ -1476,6 +1528,16 @@ class _ResultsPanelState extends State<_ResultsPanel> {
             padding: EdgeInsets.only(bottom: e.key < s.flags.length - 1 ? 12 : 0),
             child: _FlagCard(flag: e.value),
           )),
+          const SizedBox(height: 16),
+        ] else ...[
+          const EmptyState(
+            compact: true,
+            icon: Icons.verified_outlined,
+            color: AppColors.green,
+            title: 'No red flags found',
+            message:
+                'Nothing in this claim stood out as misleading. Still check the sources below before sharing.',
+          ),
           const SizedBox(height: 16),
         ],
 
@@ -1626,6 +1688,23 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                                       strokeWidth: 2.5, color: _kAccent),
                                 ),
                               )
+                            : _sourcesEmpty
+                                ? EmptyState(
+                                    compact: true,
+                                    icon: Icons.link_off_rounded,
+                                    color: AppColors.sky,
+                                    title: 'No trusted sources found',
+                                    message:
+                                        'We could not find reliable sources for this claim. Try rewording it or checking a fact-checking site directly.',
+                                    actionLabel: 'Try again',
+                                    onAction: () {
+                                      setState(() {
+                                        _sourcesEmpty = false;
+                                        _sourcesExpanded = false;
+                                      });
+                                      _toggleSources();
+                                    },
+                                  )
                             : _sourcesError
                                 ? AppErrorCard(
                                     title: 'Could not load sources',

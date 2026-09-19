@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
 import 'models/community_message.dart';
 import 'services/community_service.dart';
+import 'services/connectivity_service.dart';
 import 'services/profile_service.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/glass_button.dart';
@@ -62,6 +63,7 @@ class CommunityHubPage extends StatefulWidget {
 class _CommunityHubPageState extends State<CommunityHubPage> {
   final _textCtrl = TextEditingController();
   final _scroll   = ScrollController();
+  final _inputFocus = FocusNode();
   StreamSubscription<List<CommunityMessage>>? _sub;
 
   List<CommunityMessage> _messages  = [];
@@ -99,7 +101,9 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       onError: (_) {
         if (!mounted) return;
         setState(() {
-          _error = 'Could not load messages. Check your connection.';
+          _error = ConnectivityService.online.value
+              ? 'Could not load messages. Please try again.'
+              : kOfflineMessage;
           _loaded = true;
         });
       },
@@ -129,12 +133,27 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   void dispose() {
     _sub?.cancel();
     _textCtrl.dispose();
+    _inputFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
   // ── Moderation (App Store UGC requirements) ─────────────────────────────────
+  void _showOffline() {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+        content: Text(kOfflineMessage),
+        behavior: SnackBarBehavior.floating,
+      ));
+  }
+
   Future<void> _reportMessage(CommunityMessage m) async {
+    if (!await ConnectivityService.check()) {
+      if (mounted) _showOffline();
+      return;
+    }
+    if (!mounted) return;
     // Hide immediately for this viewer; the report also propagates to Firestore
     // where it auto-hides for everyone once the threshold is reached.
     setState(() => _messages.removeWhere((x) => x.id == m.id));
@@ -254,17 +273,20 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       }
     }
 
-    // Capture and clear before async gap
+    // Offline: keep the draft and tell the user.
+    if (!await ConnectivityService.check()) {
+      if (mounted) _showOffline();
+      return;
+    }
+
+    // Capture before async gap; the draft is only cleared after success.
     final imageBytes = _pendingImageBytes;
     final mimeType   = _pendingMimeType;
-    _textCtrl.clear();
     if (!mounted) return;
     FocusScope.of(context).unfocus();
     setState(() {
       _sending           = true;
       _sendingIsAsk      = _isAskMode;
-      _pendingImageBytes = null;
-      _pendingMimeType   = null;
     });
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _scrollToNewest(animate: true));
@@ -284,12 +306,23 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
         );
         ProfileService.incrementCommunity();
       }
+      if (mounted) {
+        _textCtrl.clear();
+        setState(() {
+          _pendingImageBytes = null;
+          _pendingMimeType   = null;
+        });
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not post: ${e.toString().replaceFirst('Exception: ', '')}'),
-          behavior: SnackBarBehavior.floating,
-        ));
+        if (isOfflineError(e)) {
+          _showOffline();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Could not post: ${e.toString().replaceFirst('Exception: ', '')}'),
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -513,6 +546,23 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              setState(() => _isAskMode = true);
+              _inputFocus.requestFocus();
+            },
+            icon: const Icon(Icons.edit_rounded, size: 18),
+            label: Text('Ask the first question',
+                style: _m(size: 13, weight: FontWeight.w800,
+                    color: Colors.white)),
+            style: FilledButton.styleFrom(
+              backgroundColor: _kAccent,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+            ),
+          ),
         ],
       ),
     );
@@ -564,6 +614,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
               Expanded(
                 child: TextField(
                   controller:    _textCtrl,
+                  focusNode:     _inputFocus,
                   enabled:       !busy,
                   maxLines:      4,
                   minLines:      1,
