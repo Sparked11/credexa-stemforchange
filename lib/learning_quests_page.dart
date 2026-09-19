@@ -3,12 +3,28 @@ import 'package:flutter/services.dart';
 import 'models/quest.dart';
 import 'services/profile_service.dart';
 import 'auth_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
+import 'dart:math' as math;
 
 // ── Design tokens (match app-wide language) ───────────────────────────────────
-const _kPrimary = Color(0xFF1E293B);
 const _kSecondary = Color(0xFF64748B);
 const _kAccent = Color(0xFF22C55E);
-const _kBackground = Color(0xFFF1F5F9);
+
+extension _QuestTheme on BuildContext {
+  bool get _isDark => Theme.of(this).brightness == Brightness.dark;
+  Color get ink => Theme.of(this).colorScheme.onSurface;
+  Color get muted =>
+      Theme.of(this).colorScheme.onSurface.withValues(alpha: 0.72);
+  Color get surf => _isDark ? AppColors.slate800 : Colors.white;
+  Color get pageBg =>
+      _isDark ? AppColors.slate900 : const Color(0xFFF1F5F9);
+  Color get subtle =>
+      _isDark ? AppColors.slate900 : const Color(0xFFF8FAFC);
+  Color get line => _isDark ? AppColors.slate700 : const Color(0xFFE2E8F0);
+  Color tint(Color c) => c.withValues(alpha: _isDark ? 0.16 : 0.10);
+}
 
 const _kCardRadius = 24.0;
 const _kBtnRadius = 14.0;
@@ -37,6 +53,8 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
   int _totalXp = 0;
   int _streak = 0;
   int _questsCompleted = 0;
+  int _correctCount = 0;
+  int _bestStreak = 0;
 
   // Tracks whether the user has started the quest run (false => landing screen).
   bool _started = false;
@@ -49,6 +67,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
 
   late final AnimationController _feedbackCtrl; // correct/incorrect reveal
   late final AnimationController _progressCtrl; // XP bar progress
+  late final AnimationController _xpPulseCtrl; // XP pill pulse on correct
   late final AnimationController _pathPulseCtrl; // winding path current-node pulse
   late final Animation<double> _revealAnim;
 
@@ -652,6 +671,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
+    _xpPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    );
     _pathPulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -667,6 +690,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
     _feedbackCtrl.dispose();
     _progressCtrl.dispose();
     _pathPulseCtrl.dispose();
+    _xpPulseCtrl.dispose();
     super.dispose();
   }
 
@@ -691,12 +715,15 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       if (isCorrect) {
         _totalXp += _quest.xpReward;
         _streak++;
+        _correctCount++;
+        if (_streak > _bestStreak) _bestStreak = _streak;
       } else {
         _streak = 0;
       }
     });
 
     if (isCorrect) {
+      _xpPulseCtrl.forward(from: 0);
       HapticFeedback.mediumImpact();
     } else {
       HapticFeedback.lightImpact();
@@ -708,6 +735,21 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
     // Persist progress and XP.
     await ProfileService.incrementQuests();
     if (isCorrect) await ProfileService.addXp(_quest.xpReward);
+  }
+
+  /// Leaves the active quest. Progress is already persisted per answer via
+  /// ProfileService, so no confirmation is needed; we just resume from there.
+  void _quitToPath() {
+    HapticFeedback.lightImpact();
+    final saved = ProfileService.data.value.quests;
+    setState(() {
+      _started = false;
+      _currentQuestIndex = saved.clamp(0, _quests.length - 1);
+      _selectedOptionIndex = -1;
+      _answered = false;
+      _correct = false;
+    });
+    _feedbackCtrl.reset();
   }
 
   void _nextQuest() {
@@ -748,6 +790,8 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       _totalXp = 0;
       _streak = 0;
       _questsCompleted = 0;
+      _correctCount = 0;
+      _bestStreak = 0;
       _finished = false;
       _started = true;
       _newlyEarnedBadges.clear();
@@ -759,7 +803,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _kBackground,
+      backgroundColor: context.pageBg,
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 500),
         switchInCurve: Curves.easeOutCubic,
@@ -834,8 +878,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                               ],
                             ),
                             const SizedBox(height: 12),
-                            const Text('🧭',
-                                style: TextStyle(fontSize: 44)),
+                            const IconBadge(
+                                icon: Icons.explore_rounded,
+                                color: Colors.white,
+                                size: 64),
                             const SizedBox(height: 4),
                             const Text(
                               'Learning Quests',
@@ -861,18 +907,20 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                               mainAxisAlignment:
                                   MainAxisAlignment.spaceEvenly,
                               children: [
-                                _headerStat('🔥', '$actions', 'Actions'),
+                                _headerStat(Icons.task_alt_rounded, '$actions', 'Answered'),
                                 Container(
                                     width: 1,
                                     height: 32,
                                     color: Colors.white24),
-                                _headerStat('⚡', '${data.xp}', 'XP'),
+                                _headerStat(Icons.bolt_rounded, '${data.xp}', 'XP'),
                                 Container(
                                     width: 1,
                                     height: 32,
                                     color: Colors.white24),
                                 _headerStat(
-                                    '🧭', '${data.quests}', 'Quests'),
+                                    Icons.flag_rounded,
+                                    '${(_quests.length - data.quests).clamp(0, _quests.length)}',
+                                    'Remaining'),
                               ],
                             ),
                             const SizedBox(height: 14),
@@ -894,14 +942,16 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                               '${data.quests} / ${_quests.length} completed',
                               style: const TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 10,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.white70,
                               ),
                             ),
                             _TappableNode(
-                              onTap: () =>
-                                  setState(() => _headerExpanded = false),
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                setState(() => _headerExpanded = false);
+                              },
                               child: const Padding(
                                 padding: EdgeInsets.symmetric(vertical: 8),
                                 child: Icon(
@@ -915,8 +965,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                         ),
                       )
                     : _TappableNode(
-                        onTap: () =>
-                            setState(() => _headerExpanded = true),
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _headerExpanded = true);
+                        },
                         child: Padding(
                           padding:
                               const EdgeInsets.fromLTRB(16, 8, 16, 14),
@@ -954,12 +1006,12 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
     );
   }
 
-  Widget _headerStat(String icon, String value, String label) {
+  Widget _headerStat(IconData icon, String value, String label) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(icon, style: const TextStyle(fontSize: 20)),
-        const SizedBox(height: 2),
+        IconBadge(icon: icon, color: Colors.white, size: 30),
+        const SizedBox(height: 3),
         Text(
           value,
           style: const TextStyle(
@@ -973,7 +1025,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
           label,
           style: const TextStyle(
             fontFamily: 'Montserrat',
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: FontWeight.w600,
             color: Colors.white70,
           ),
@@ -991,9 +1043,9 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
           builder: (context, constraints) {
             final w = constraints.maxWidth;
             final positions = _computeNodePositions(w);
-            const totalHeight = 56.0 + 14 * 108.0 + 28.0 + 160.0;
+            const totalHeight = 56.0 + 14 * 108.0 + 28.0 + 52.0;
             return SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 32),
+              padding: const EdgeInsets.only(bottom: 16),
               child: SizedBox(
                 width: w,
                 height: totalHeight,
@@ -1069,13 +1121,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       nodeBg = const Color(0xFF22C55E);
       nodeBorder = const Color(0xFF16A34A);
       shadowColor = const Color(0xFF22C55E);
-      nodeInner = Text(
-        _topicEmoji(topic),
-        style: const TextStyle(fontSize: 22),
-      );
+      nodeInner = Icon(_topicIcon(topic), color: Colors.white, size: 26);
     } else {
-      nodeBg = const Color(0xFFE2E8F0);
-      nodeBorder = const Color(0xFFCBD5E1);
+      nodeBg = context.line;
+      nodeBorder = context._isDark ? AppColors.slate700 : const Color(0xFFCBD5E1);
       shadowColor = const Color(0xFFCBD5E1);
       nodeInner = const Icon(Icons.lock_rounded,
           color: Color(0xFF94A3B8), size: 18);
@@ -1200,33 +1249,15 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       top: position.dy + kNodeR + 8,
       width: 88,
       child: Center(
-        child: _TappableNode(
+        child: GlassButton(
+          label: 'START',
+          accent: const Color(0xFF16A34A),
+          height: 34,
+          radius: 100,
+          fontSize: 12,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          haptic: GlassHaptic.none, // _startQuests fires its own haptic
           onTap: _startQuests,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF16A34A),
-              borderRadius: BorderRadius.circular(100),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF15803D).withValues(alpha: 0.45),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Text(
-              'START',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ),
         ),
       ),
     );
@@ -1244,7 +1275,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _topBar(showXp: true),
+          _topBar(showXp: true, onBack: _quitToPath),
           const SizedBox(height: 18),
           _progressRow(progress),
           const SizedBox(height: 20),
@@ -1275,6 +1306,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                 index: i,
                 selectedIndex: _selectedOptionIndex,
                 answered: _answered,
+                xp: quest.xpReward,
                 onTap: () => _selectOption(i),
               ),
             );
@@ -1282,14 +1314,14 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
           // Reveal panel.
           SizeTransition(
             sizeFactor: _revealAnim,
-            axisAlignment: -1,
+            alignment: Alignment.topCenter,
             child: _answered ? _revealPanel(quest) : const SizedBox.shrink(),
           ),
           if (_answered) ...[
             const SizedBox(height: 16),
             _primaryButton(
               label: _currentQuestIndex >= _quests.length - 1
-                  ? 'Complete! 🎉'
+                  ? 'Complete!'
                   : 'Next Quest →',
               onTap: _nextQuest,
             ),
@@ -1302,9 +1334,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
 
   // ── Completion screen ───────────────────────────────────────────────────────
   Widget _buildCompletionScreen() {
-    final correctCount = _questsCompleted;
-    return SafeArea(
+    return Stack(
       key: const ValueKey('done'),
+      children: [
+    SafeArea(
       child: SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       child: Column(
@@ -1312,21 +1345,25 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
         children: [
           _topBar(showXp: true),
           const SizedBox(height: 36),
-          const Center(child: Text('🎉', style: TextStyle(fontSize: 76))),
+          const Center(
+              child: IconBadge(
+                  icon: Icons.emoji_events_rounded,
+                  color: AppColors.amber,
+                  size: 96)),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             'Quest Complete!',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 26,
               fontWeight: FontWeight.w900,
-              color: _kPrimary,
+              color: context.ink,
             ),
           ),
           const SizedBox(height: 6),
           Text(
-            'You completed all ${_quests.length} quests',
+            'You answered $_questsCompleted of ${_quests.length} quests',
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontFamily: 'Montserrat',
@@ -1341,7 +1378,8 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
               children: [
                 Expanded(
                   child: _statTile(
-                    emoji: '⚡',
+                    icon: Icons.bolt_rounded,
+                    color: AppColors.amber,
                     value: '$_totalXp',
                     label: 'Total XP',
                   ),
@@ -1353,8 +1391,9 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                 ),
                 Expanded(
                   child: _statTile(
-                    emoji: '🔥',
-                    value: '$_streak',
+                    icon: Icons.local_fire_department_rounded,
+                    color: const Color(0xFFEA580C),
+                    value: '$_bestStreak',
                     label: 'Best Streak',
                   ),
                 ),
@@ -1365,9 +1404,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
                 ),
                 Expanded(
                   child: _statTile(
-                    emoji: '✅',
-                    value: '$correctCount',
-                    label: 'Quests Done',
+                    icon: Icons.check_circle_rounded,
+                    color: AppColors.green,
+                    value: '$_correctCount/$_questsCompleted',
+                    label: 'Correct',
                   ),
                 ),
               ],
@@ -1379,17 +1419,26 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '🏆 Badges Unlocked',
-                    style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: _kPrimary,
+                  Row(children: [
+                    const Icon(Icons.emoji_events_rounded,
+                        color: AppColors.amber, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Badges Unlocked',
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: context.ink,
+                      ),
                     ),
-                  ),
+                  ]),
                   const SizedBox(height: 12),
-                  ..._newlyEarnedBadges.map(_badgeRow),
+                  for (int i = 0; i < _newlyEarnedBadges.length; i++)
+                    _StaggerIn(
+                      delay: Duration(milliseconds: 500 + i * 160),
+                      child: _badgeRow(_newlyEarnedBadges[i]),
+                    ),
                 ],
               ),
             ),
@@ -1407,23 +1456,36 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
         ],
         ),
       ),
+    ),
+        const Positioned.fill(child: IgnorePointer(child: _ConfettiBurst())),
+      ],
     );
   }
 
   // ── Reusable building blocks ────────────────────────────────────────────────
-  Widget _topBar({required bool showXp}) {
+  Widget _topBar({required bool showXp, VoidCallback? onBack}) {
     return Row(
       children: [
-        Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
-        const SizedBox(width: 14),
-        const Expanded(
+        if (onBack != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: IconButton(
+              onPressed: onBack,
+              tooltip: 'Back to quest path',
+              icon: Icon(Icons.arrow_back_rounded, color: context.ink),
+            ),
+          ),
+        Image.asset('assets/logomain.png',
+            height: onBack != null ? 48 : 62, fit: BoxFit.contain),
+        const SizedBox(width: 12),
+        Expanded(
           child: Text(
             'Learning Quests',
             style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 18,
               fontWeight: FontWeight.w800,
-              color: _kPrimary,
+              color: context.ink,
             ),
           ),
         ),
@@ -1432,21 +1494,36 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
             tween: Tween(begin: 0, end: _totalXp.toDouble()),
             duration: const Duration(milliseconds: 600),
             curve: Curves.easeOutCubic,
-            builder: (context, value, child) => Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0FDF4),
-                borderRadius: BorderRadius.circular(100),
-                border: Border.all(color: const Color(0xFFBBF7D0)),
-              ),
-              child: Text(
-                '⚡ ${value.round()} XP',
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF16A34A),
+            builder: (context, value, child) => AnimatedBuilder(
+              animation: _xpPulseCtrl,
+              builder: (context, _) => Transform.scale(
+                scale: 1 + 0.2 * math.sin(_xpPulseCtrl.value * math.pi),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: context.tint(AppColors.green),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(
+                        color: AppColors.green.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.bolt_rounded,
+                          size: 16, color: AppColors.greenDark),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${value.round()} XP',
+                        style: const TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.greenDark,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1477,17 +1554,25 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
+                color: context.tint(const Color(0xFFEA580C)),
                 borderRadius: BorderRadius.circular(100),
               ),
-              child: Text(
-                '🔥 $_streak',
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFFEA580C),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.local_fire_department_rounded,
+                      size: 15, color: Color(0xFFEA580C)),
+                  const SizedBox(width: 3),
+                  Text(
+                    '$_streak',
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFEA580C),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1502,7 +1587,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
             builder: (context, value, child) => LinearProgressIndicator(
               value: value,
               minHeight: 8,
-              backgroundColor: const Color(0xFFE2E8F0),
+              backgroundColor: context.line,
               valueColor: const AlwaysStoppedAnimation<Color>(_kAccent),
             ),
           ),
@@ -1524,15 +1609,22 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
               color: _topicColor(quest.topic).withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(100),
             ),
-            child: Text(
-              '${_topicEmoji(quest.topic)} ${quest.topic} · '
-              '${_difficultyLabel(quest.difficulty)}',
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: _topicColor(quest.topic),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_topicIcon(quest.topic),
+                    size: 15, color: _topicColor(quest.topic)),
+                const SizedBox(width: 6),
+                Text(
+                  '${quest.topic} · ${_difficultyLabel(quest.difficulty)}',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: _topicColor(quest.topic),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -1550,32 +1642,32 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              border: Border(
+            decoration: BoxDecoration(
+              color: context.subtle,
+              borderRadius: const BorderRadius.all(Radius.circular(12)),
+              border: const Border(
                 left: BorderSide(color: _kAccent, width: 4),
               ),
             ),
             child: Text(
               quest.postText,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'Montserrat',
                 fontSize: 15,
                 height: 1.5,
                 fontWeight: FontWeight.w600,
-                color: _kPrimary,
+                color: context.ink,
               ),
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'What manipulation technique is being used?',
             style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 14,
               fontWeight: FontWeight.w800,
-              color: _kPrimary,
+              color: context.ink,
             ),
           ),
         ],
@@ -1585,11 +1677,15 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
 
   Widget _revealPanel(Quest quest) {
     final correct = _correct;
-    final bg = correct ? const Color(0xFFF0FDF4) : const Color(0xFFFFF5F5);
-    final border =
-        correct ? const Color(0xFFBBF7D0) : const Color(0xFFFECACA);
     final accentColor =
         correct ? const Color(0xFF16A34A) : const Color(0xFFEF4444);
+    final bg = context.tint(accentColor);
+    final border = accentColor.withValues(alpha: 0.35);
+    final picked = (!correct &&
+            _selectedOptionIndex >= 0 &&
+            _selectedOptionIndex < quest.options.length)
+        ? quest.options[_selectedOptionIndex]
+        : null;
 
     return Container(
       width: double.infinity,
@@ -1603,26 +1699,58 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            correct
-                ? '✅ Correct!'
-                : '❌ Not quite...',
-            style: TextStyle(
-              fontFamily: 'Montserrat',
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-              color: accentColor,
-            ),
+          Row(
+            children: [
+              Icon(
+                  correct
+                      ? Icons.check_circle_rounded
+                      : Icons.cancel_rounded,
+                  color: accentColor,
+                  size: 20),
+              const SizedBox(width: 8),
+              Text(
+                correct ? 'Correct!' : 'Not quite...',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: accentColor,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
+          if (picked != null) ...[
+            Text(
+              'Why "${picked.label}" is not it',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: accentColor,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              picked.explanation,
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 13,
+                height: 1.5,
+                fontWeight: FontWeight.w500,
+                color: context.ink,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           Text(
             quest.explanation,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 13,
               height: 1.5,
               fontWeight: FontWeight.w500,
-              color: _kPrimary,
+              color: context.ink,
             ),
           ),
           const SizedBox(height: 12),
@@ -1630,7 +1758,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
             padding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.surf,
               borderRadius: BorderRadius.circular(100),
               border: Border.all(color: border),
             ),
@@ -1650,31 +1778,32 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
   }
 
   Widget _statTile({
-    required String emoji,
+    required IconData icon,
+    required Color color,
     required String value,
     required String label,
   }) {
     return Column(
       children: [
-        Text(emoji, style: const TextStyle(fontSize: 22)),
+        IconBadge(icon: icon, color: color, size: 40),
         const SizedBox(height: 6),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 20,
             fontWeight: FontWeight.w900,
-            color: _kPrimary,
+            color: context.ink,
           ),
         ),
         const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 11,
             fontWeight: FontWeight.w600,
-            color: _kSecondary,
+            color: context.muted,
           ),
         ),
       ],
@@ -1686,17 +1815,10 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0FDF4),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Text(b.emoji, style: const TextStyle(fontSize: 20)),
-            ),
-          ),
+          const IconBadge(
+              icon: Icons.military_tech_rounded,
+              color: AppColors.green,
+              size: 40),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1704,20 +1826,20 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
               children: [
                 Text(
                   b.title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 13.5,
                     fontWeight: FontWeight.w800,
-                    color: _kPrimary,
+                    color: context.ink,
                   ),
                 ),
                 Text(
                   b.desc,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 11.5,
                     fontWeight: FontWeight.w500,
-                    color: _kSecondary,
+                    color: context.muted,
                   ),
                 ),
               ],
@@ -1734,7 +1856,7 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.surf,
         borderRadius: BorderRadius.circular(_kCardRadius),
         boxShadow: const [_kCardShadow],
       ),
@@ -1742,27 +1864,16 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
     );
   }
 
+  // Handlers passed in already fire their own haptics.
   Widget _primaryButton({required String label, required VoidCallback onTap}) {
-    return GestureDetector(
+    return GlassButton(
+      label: label,
+      accent: _kAccent,
+      height: 52,
+      radius: _kBtnRadius,
+      fontSize: 15,
+      haptic: GlassHaptic.none,
       onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: _kAccent,
-          borderRadius: BorderRadius.circular(_kBtnRadius),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
-          ),
-        ),
-      ),
     );
   }
 
@@ -1770,27 +1881,15 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
     required String label,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
+    return GlassButton(
+      label: label,
+      filled: false,
+      accent: _kAccent,
+      height: 52,
+      radius: _kBtnRadius,
+      fontSize: 15,
+      haptic: GlassHaptic.none,
       onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(_kBtnRadius),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontFamily: 'Montserrat',
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            color: _kPrimary,
-          ),
-        ),
-      ),
     );
   }
 
@@ -1801,25 +1900,25 @@ class _LearningQuestsPageState extends State<LearningQuestsPage>
         QuestDifficulty.hard => 'Hard',
       };
 
-  static String _topicEmoji(String topic) {
+  static IconData _topicIcon(String topic) {
     switch (topic) {
       case 'Health':
-        return '🏥';
+        return Icons.health_and_safety_rounded;
       case 'Environment':
-        return '🌍';
+        return Icons.public_rounded;
       case 'Politics':
       case 'Politics/Economy':
-        return '🏛️';
+        return Icons.account_balance_rounded;
       case 'Technology':
-        return '📡';
+        return Icons.cell_tower_rounded;
       case 'Society':
-        return '👥';
+        return Icons.groups_rounded;
       case 'Finance':
-        return '💰';
+        return Icons.savings_rounded;
       case 'Education':
-        return '🎓';
+        return Icons.school_rounded;
       default:
-        return '📰';
+        return Icons.newspaper_rounded;
     }
   }
 
@@ -1854,6 +1953,7 @@ class _OptionButton extends StatefulWidget {
     required this.index,
     required this.selectedIndex,
     required this.answered,
+    required this.xp,
     required this.onTap,
   });
 
@@ -1861,96 +1961,150 @@ class _OptionButton extends StatefulWidget {
   final int index;
   final int selectedIndex;
   final bool answered;
+  final int xp;
   final VoidCallback onTap;
 
   @override
   State<_OptionButton> createState() => _OptionButtonState();
 }
 
-class _OptionButtonState extends State<_OptionButton> {
+class _OptionButtonState extends State<_OptionButton>
+    with SingleTickerProviderStateMixin {
   bool _pressed = false;
+  late final AnimationController _fx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  @override
+  void didUpdateWidget(covariant _OptionButton old) {
+    super.didUpdateWidget(old);
+    if (!old.answered &&
+        widget.answered &&
+        widget.selectedIndex == widget.index) {
+      _fx.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _fx.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isSelected = widget.selectedIndex == widget.index;
     final answered = widget.answered;
     final isCorrect = widget.option.isCorrect;
+    const green = Color(0xFF16A34A);
+    const red = Color(0xFFEF4444);
 
     // Resolve colors based on the current reveal state.
-    Color bg = Colors.white;
-    Color border = const Color(0xFFE2E8F0);
-    Color textColor = _kPrimary;
+    Color bg = context.surf;
+    Color border = context.line;
+    Color textColor = context.ink;
     Widget? trailing;
 
     if (!answered) {
       if (isSelected) {
-        bg = const Color(0xFFF0FDF4);
+        bg = context.tint(_kAccent);
         border = _kAccent;
       }
     } else {
       if (isCorrect) {
         // Always show the correct answer in green after reveal.
-        bg = const Color(0xFFF0FDF4);
-        border = const Color(0xFF16A34A);
-        textColor = const Color(0xFF166534);
-        trailing = const _StatusIcon(
-          icon: Icons.check_rounded,
-          color: Color(0xFF16A34A),
-        );
+        bg = context.tint(green);
+        border = green;
+        textColor = context._isDark ? const Color(0xFFBBF7D0) : const Color(0xFF166534);
+        trailing = const _StatusIcon(icon: Icons.check_rounded, color: green);
       } else if (isSelected) {
         // The user picked this and it was wrong.
-        bg = const Color(0xFFFFF5F5);
-        border = const Color(0xFFEF4444);
-        textColor = const Color(0xFF991B1B);
-        trailing = const _StatusIcon(
-          icon: Icons.close_rounded,
-          color: Color(0xFFEF4444),
-        );
+        bg = context.tint(red);
+        border = red;
+        textColor = context._isDark ? const Color(0xFFFECACA) : const Color(0xFF991B1B);
+        trailing = const _StatusIcon(icon: Icons.close_rounded, color: red);
       }
     }
 
     final scale = _pressed && !answered ? 0.96 : 1.0;
+    final wrongPick = answered && isSelected && !isCorrect;
+    final rightPick = answered && isSelected && isCorrect;
 
     return GestureDetector(
       onTapDown: answered ? null : (_) => setState(() => _pressed = true),
       onTapUp: answered ? null : (_) => setState(() => _pressed = false),
       onTapCancel: answered ? null : () => setState(() => _pressed = false),
       onTap: widget.onTap,
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 1.0, end: scale),
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
-        builder: (_, value, child) => Transform.scale(
-          scale: value,
-          child: child,
-        ),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(_kBtnRadius),
-            border: Border.all(color: border, width: 1.6),
-          ),
-          child: Row(
+      child: AnimatedBuilder(
+        animation: _fx,
+        builder: (context, child) {
+          final t = _fx.value;
+          final dx = wrongPick && t < 1
+              ? math.sin(t * math.pi * 6) * 9 * (1 - t)
+              : 0.0;
+          return Stack(
+            clipBehavior: Clip.none,
             children: [
-              Expanded(
-                child: Text(
-                  widget.option.label,
-                  style: TextStyle(
-                    fontFamily: 'Montserrat',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: textColor,
+              Transform.translate(offset: Offset(dx, 0), child: child),
+              if (rightPick && t > 0 && t < 1)
+                Positioned(
+                  right: 20,
+                  top: -8 - 44 * Curves.easeOut.transform(t),
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: (1 - Curves.easeIn.transform(t)).clamp(0.0, 1.0),
+                      child: Text(
+                        '+${widget.xp} XP',
+                        style: const TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: green,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              if (trailing != null) ...[
-                const SizedBox(width: 10),
-                trailing,
-              ],
             ],
+          );
+        },
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 1.0, end: scale),
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          builder: (_, value, child) => Transform.scale(
+            scale: value,
+            child: child,
+          ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(_kBtnRadius),
+              border: Border.all(color: border, width: 1.6),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.option.label,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: textColor,
+                    ),
+                  ),
+                ),
+                if (trailing != null) ...[
+                  const SizedBox(width: 10),
+                  trailing,
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2091,4 +2245,126 @@ class _QuestPathPainter extends CustomPainter {
   @override
   bool shouldRepaint(_QuestPathPainter old) =>
       old.completedCount != completedCount;
+}
+
+
+// ── Staggered scale/fade-in wrapper (badge rows) ──────────────────────────────
+class _StaggerIn extends StatefulWidget {
+  const _StaggerIn({required this.delay, required this.child});
+  final Duration delay;
+  final Widget child;
+
+  @override
+  State<_StaggerIn> createState() => _StaggerInState();
+}
+
+class _StaggerInState extends State<_StaggerIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 450),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(widget.delay, () {
+      if (mounted) _c.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = CurvedAnimation(parent: _c, curve: Curves.easeOutBack);
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: _c, curve: Curves.easeOut),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.85, end: 1).animate(a),
+        alignment: Alignment.centerLeft,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+// ── Lightweight confetti burst (no packages) ──────────────────────────────────
+class _ConfettiBurst extends StatefulWidget {
+  const _ConfettiBurst();
+
+  @override
+  State<_ConfettiBurst> createState() => _ConfettiBurstState();
+}
+
+class _ConfettiBurstState extends State<_ConfettiBurst>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2800),
+  )..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) => CustomPaint(
+          painter: _ConfettiPainter(_c.value),
+          size: Size.infinite,
+        ),
+      );
+}
+
+class _ConfettiPainter extends CustomPainter {
+  _ConfettiPainter(this.t);
+  final double t;
+
+  static const _colors = [
+    Color(0xFF22C55E),
+    Color(0xFFF59E0B),
+    Color(0xFF6366F1),
+    Color(0xFF0EA5E9),
+    Color(0xFFEF4444),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(7);
+    final origin = Offset(size.width / 2, size.height * 0.26);
+    final paint = Paint();
+    for (int i = 0; i < 70; i++) {
+      final angle = -math.pi / 2 + (rnd.nextDouble() - 0.5) * math.pi * 1.3;
+      final speed = 180 + rnd.nextDouble() * 320;
+      final spin = rnd.nextDouble() * 10;
+      final sz = 5 + rnd.nextDouble() * 6;
+      paint.color = _colors[i % _colors.length]
+          .withValues(alpha: (1 - Curves.easeIn.transform(t)).clamp(0.0, 1.0));
+      final secs = t * 2.8;
+      final pos = origin +
+          Offset(math.cos(angle) * speed * t * 1.1,
+              math.sin(angle) * speed * t * 1.1 + 420 * secs * secs * 0.5 * 0.6);
+      canvas.save();
+      canvas.translate(pos.dx, pos.dy);
+      canvas.rotate(spin * t);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset.zero, width: sz, height: sz * 0.55),
+            const Radius.circular(1.5)),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ConfettiPainter old) => old.t != t;
 }

@@ -1,15 +1,24 @@
+import 'widgets/adaptive_chrome.dart';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'auth_service.dart';
 import 'services/image_forensics_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 const _kPrimary    = Color(0xFF1E293B);
-const _kSecondary  = Color(0xFF64748B);
 const _kAccent     = Color(0xFF22C55E);
-const _kBackground = Color(0xFFF1F5F9);
+
+// Theme-aware helpers (light + dark).
+Color _bg(BuildContext c) => Theme.of(c).scaffoldBackgroundColor;
+Color _surface(BuildContext c) => Theme.of(c).colorScheme.surface;
+Color _sec(BuildContext c) =>
+    Theme.of(c).colorScheme.onSurface.withValues(alpha: 0.7);
+bool _dark(BuildContext c) => Theme.of(c).brightness == Brightness.dark;
 
 // ── Map ForensicsResult → UI check rows ───────────────────────────────────────
 List<_CheckResult> _checksFromForensics(ForensicsResult r) =>
@@ -27,7 +36,7 @@ List<_CheckResult> _checksFromForensics(ForensicsResult r) =>
 TextStyle _m({
   required double size,
   FontWeight weight = FontWeight.w600,
-  Color color = _kPrimary,
+  Color? color,
   double? height,
   double spacing = 0,
 }) =>
@@ -77,6 +86,7 @@ class _PressBtnState extends State<_PressBtn>
       onTapDown: (_) => _c.forward(),
       onTapUp: (_) {
         _c.reverse();
+        if (widget.onTap != null) HapticFeedback.mediumImpact();
         widget.onTap?.call();
       },
       onTapCancel: () => _c.reverse(),
@@ -309,18 +319,7 @@ class _VisualAnalyzerPageState extends State<VisualAnalyzerPage> {
   }
 
   Widget _buildNavbar() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      height: 64,
-      decoration: BoxDecoration(
-        color: _scrolled ? Colors.white : _kBackground,
-        border: _scrolled
-            ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
-            : null,
-        boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
-            : [],
-      ),
+    return GlassTopBar.simple(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -373,6 +372,8 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
   int _analysisStep = 0;
   String? _uploadedFileName;
   String? _apiError;
+  VoidCallback? _retry;
+  Uint8List? _photoBytes;
 
   late final AnimationController _resultsCtrl;
   late final AnimationController _pulseCtrl;
@@ -411,7 +412,9 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
       _showResults = false;
       _analysisStep = 0;
       _uploadedFileName = null;
+      _photoBytes = null;
       _apiError = null;
+      _retry = null;
     });
     _resultsCtrl.reset();
 
@@ -429,43 +432,77 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
 
   // ── Camera capture ────────────────────────────────────────────────────────
   Future<void> _pickFromCamera() async {
-    final photo = await ImagePicker().pickImage(
-      source: ImageSource.camera,
-      imageQuality: 90,
-      maxWidth: 1920,
-    );
-    if (photo == null) return;
-    final bytes = await photo.readAsBytes();
-    if (bytes.lengthInBytes > 10 * 1024 * 1024) {
-      setState(() => _apiError = 'Image too large. Please use an image under 10 MB.');
+    final Uint8List bytes;
+    final String name;
+    try {
+      final photo = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        imageQuality: 90,
+        maxWidth: 1920,
+      );
+      if (photo == null) return;
+      bytes = await photo.readAsBytes();
+      name = photo.name;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _apiError = 'The camera is unavailable. Enable camera access in Settings > Credexa, then try again.';
+        _retry = _pickFromCamera;
+      });
       return;
     }
-    await _analyzeFile(bytes, photo.name);
+    if (!mounted) return;
+    if (bytes.lengthInBytes > 10 * 1024 * 1024) {
+      setState(() {
+        _apiError = 'Image too large. Please use an image under 10 MB.';
+        _retry = _pickFromCamera;
+      });
+      return;
+    }
+    await _analyzeFile(bytes, name);
   }
 
   // ── Gallery picker ────────────────────────────────────────────────────────
   Future<void> _pickFile() async {
-    final photo = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 90,
-    );
-    if (photo == null) return;
-    final bytes = await photo.readAsBytes();
-    if (bytes.lengthInBytes > 10 * 1024 * 1024) {
-      setState(() => _apiError = 'Image too large. Please use an image under 10 MB.');
+    final Uint8List bytes;
+    final String name;
+    try {
+      final photo = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 90,
+      );
+      if (photo == null) return;
+      bytes = await photo.readAsBytes();
+      name = photo.name;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _apiError = 'Could not open your photo library. Check Photos access in Settings and try again.';
+        _retry = _pickFile;
+      });
       return;
     }
-    await _analyzeFile(bytes, photo.name);
+    if (!mounted) return;
+    if (bytes.lengthInBytes > 10 * 1024 * 1024) {
+      setState(() {
+        _apiError = 'Image too large. Please use an image under 10 MB.';
+        _retry = _pickFile;
+      });
+      return;
+    }
+    await _analyzeFile(bytes, name);
   }
 
   Future<void> _analyzeFile(Uint8List bytes, String fileName) async {
     setState(() {
       _uploadedFileName = fileName;
+      _photoBytes = bytes;
       _selected = null;
       _analyzing = true;
       _showResults = false;
       _analysisStep = 0;
       _apiError = null;
+      _retry = null;
     });
     _resultsCtrl.reset();
 
@@ -551,7 +588,10 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
       );
     } catch (_) {
       if (mounted) {
-        setState(() => _apiError = 'Analysis failed — the image could not be decoded.');
+        setState(() {
+          _apiError = 'We couldn\'t read that image. Try a different photo (JPG, PNG or WEBP).';
+          _retry = _pickFile;
+        });
       }
       return null;
     }
@@ -572,7 +612,9 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
       _analyzing = false;
       _analysisStep = 0;
       _uploadedFileName = null;
+      _photoBytes = null;
       _apiError = null;
+      _retry = null;
     });
     _resultsCtrl.reset();
   }
@@ -582,7 +624,7 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
     final hasContent = _selected != null || _uploadedFileName != null;
 
     return Container(
-      color: _kBackground,
+      color: _bg(context),
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,7 +637,7 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
           const SizedBox(height: 8),
           Text(
             'Upload any image — Credexa\'s computer vision engine checks for AI generation, face swaps, pixel manipulation, and more.',
-            style: _m(size: 14, weight: FontWeight.w500, color: _kSecondary, height: 1.65),
+            style: _m(size: 14, weight: FontWeight.w500, color: _sec(context), height: 1.65),
           ),
           const SizedBox(height: 24),
 
@@ -606,6 +648,7 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
             onTap: _onUploadZoneTap,
             selected: _selected,
             uploadedFileName: _uploadedFileName,
+            photoBytes: _photoBytes,
             pulseCtrl: _pulseCtrl,
           ),
           const SizedBox(height: 10),
@@ -615,44 +658,28 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
             Row(
               children: [
                 Expanded(
-                  child: _PressBtn(
+                  child: GlassButton(
+                    label: 'Choose File',
+                    icon: Icons.upload_file_rounded,
+                    accent: _kPrimary,
+                    height: 48,
+                    radius: 14,
+                    fontSize: 13,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     onTap: _pickFile,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      decoration: BoxDecoration(
-                        color: _kPrimary,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.upload_file_rounded, size: 18, color: Colors.white),
-                          const SizedBox(width: 8),
-                          Text('Choose File', style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                        ],
-                      ),
-                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: _PressBtn(
+                  child: GlassButton(
+                    label: 'Take Photo',
+                    icon: Icons.photo_camera_rounded,
+                    accent: _kAccent,
+                    height: 48,
+                    radius: 14,
+                    fontSize: 13,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     onTap: _pickFromCamera,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      decoration: BoxDecoration(
-                        color: _kAccent,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.photo_camera_rounded, size: 18, color: Colors.white),
-                          const SizedBox(width: 8),
-                          Text('Take Photo', style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                        ],
-                      ),
-                    ),
                   ),
                 ),
               ],
@@ -661,14 +688,24 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
 
           // ── API error ─────────────────────────────────────────────────────
           if (_apiError != null)
-            _ErrorCard(message: _apiError!, onRetry: _pickFile),
+            AppErrorCard(
+              title: 'Couldn\'t analyze that image',
+              message: _apiError!,
+              icon: Icons.image_not_supported_rounded,
+              onRetry: () {
+                HapticFeedback.lightImpact();
+                final retry = _retry ?? _pickFile;
+                setState(() { _apiError = null; _retry = null; });
+                retry();
+              },
+            ),
 
           const SizedBox(height: 8),
 
           // ── Sample picker (shown when idle) ───────────────────────────────
           if (!_analyzing && !_showResults) ...[
             Text('Try a sample:',
-                style: _m(size: 12, weight: FontWeight.w700, color: _kSecondary)),
+                style: _m(size: 12, weight: FontWeight.w700, color: _sec(context))),
             const SizedBox(height: 12),
             Row(
               children: _samples
@@ -706,6 +743,7 @@ class _AnalyzerSectionState extends State<_AnalyzerSection>
                 opacity: _resultsCtrl,
                 child: _ResultsPanel(
                   sample: _selected!,
+                  photoBytes: _photoBytes,
                   onReset: _reset,
                 ),
               ),
@@ -734,100 +772,7 @@ class _Label extends StatelessWidget {
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text(text,
-          style: _m(size: 10, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
-    );
-  }
-}
-
-// ── Error card ────────────────────────────────────────────────────────────────
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message, required this.onRetry});
-  final String message;
-  final VoidCallback onRetry;
-
-  bool get _isAuthError {
-    final m = message.toLowerCase();
-    return m.contains('auth') ||
-        m.contains('401') ||
-        m.contains('403') ||
-        m.contains('invalid');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isAuth = _isAuthError;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF5F5),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFECACA)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEF4444).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(
-                  isAuth ? Icons.block_rounded : Icons.wifi_off_rounded,
-                  size: 20,
-                  color: const Color(0xFFEF4444),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isAuth ? 'Authorization Error' : 'Connection Problem',
-                      style: _m(
-                          size: 13,
-                          weight: FontWeight.w800,
-                          color: const Color(0xFFDC2626)),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      message,
-                      style: _m(
-                          size: 11,
-                          weight: FontWeight.w600,
-                          color: const Color(0xFFDC2626),
-                          height: 1.5),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _PressBtn(
-            onTap: onRetry,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEF4444),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                'Try Again →',
-                textAlign: TextAlign.center,
-                style: _m(
-                    size: 13, weight: FontWeight.w800, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
+          style: _m(size: 11, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
     );
   }
 }
@@ -841,7 +786,9 @@ class _UploadZone extends StatelessWidget {
     required this.selected,
     required this.pulseCtrl,
     this.uploadedFileName,
+    this.photoBytes,
   });
+  final Uint8List? photoBytes;
   final bool hasSelected, analyzing;
   final VoidCallback onTap;
   final _SampleImage? selected;
@@ -859,7 +806,7 @@ class _UploadZone extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () { HapticFeedback.lightImpact(); onTap(); },
       child: AnimatedBuilder(
         animation: pulseCtrl,
         builder: (_, child) {
@@ -869,13 +816,13 @@ class _UploadZone extends StatelessWidget {
               ? _kAccent.withValues(alpha: shimmer)
               : hasSelected
                   ? _kAccent.withValues(alpha: 0.4)
-                  : const Color(0xFFCBD5E1);
+                  : Theme.of(context).colorScheme.outlineVariant;
           return AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 28),
+            padding: EdgeInsets.symmetric(vertical: photoBytes != null ? 16 : 28),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _surface(context),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: borderColor,
@@ -894,7 +841,40 @@ class _UploadZone extends StatelessWidget {
         },
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: selected != null
+          children: photoBytes != null
+              ? [
+                  // The user's own photo, with a scan sweep while analysing
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _ScanPhoto(
+                      bytes: photoBytes!,
+                      height: 190,
+                      radius: 16,
+                      scanning: analyzing,
+                      ctrl: pulseCtrl,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Text(
+                      selected?.label ?? uploadedFileName ?? 'Photo',
+                      style: _m(size: 14, weight: FontWeight.w800),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(analyzing ? 'Scanning…' : 'Uploaded image',
+                      style: _m(size: 12, weight: FontWeight.w500, color: _sec(context))),
+                  if (!analyzing) ...[
+                    const SizedBox(height: 10),
+                    Text('Tap to remove',
+                        style: _m(size: 11, weight: FontWeight.w600, color: _kAccent)),
+                  ],
+                ]
+              : selected != null
               ? [
                   // Analysed sample / uploaded result preview
                   Container(
@@ -917,7 +897,7 @@ class _UploadZone extends StatelessWidget {
                       style: _m(size: 14, weight: FontWeight.w800)),
                   const SizedBox(height: 3),
                   Text(selected!.sublabel,
-                      style: _m(size: 12, weight: FontWeight.w500, color: _kSecondary)),
+                      style: _m(size: 12, weight: FontWeight.w500, color: _sec(context))),
                   if (!analyzing) ...[
                     const SizedBox(height: 10),
                     Text('Tap to remove',
@@ -963,7 +943,7 @@ class _UploadZone extends StatelessWidget {
                           ),
                           child: Text(_fileExt!,
                               style: _m(
-                                  size: 9,
+                                  size: 11,
                                   weight: FontWeight.w800,
                                   color: _kAccent,
                                   spacing: 0.5)),
@@ -974,7 +954,7 @@ class _UploadZone extends StatelessWidget {
                           style: _m(
                               size: 12,
                               weight: FontWeight.w500,
-                              color: _kSecondary)),
+                              color: _sec(context))),
                     ],
                   ),
                   if (!analyzing) ...[
@@ -988,18 +968,18 @@ class _UploadZone extends StatelessWidget {
                     width: 56,
                     height: 56,
                     decoration: BoxDecoration(
-                      color: _kBackground,
+                      color: _bg(context),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Icon(Icons.upload_rounded,
-                        size: 26, color: _kSecondary),
+                    child: Icon(Icons.upload_rounded,
+                        size: 26, color: _sec(context)),
                   ),
                   const SizedBox(height: 12),
                   Text('Upload Image',
                       style: _m(size: 14, weight: FontWeight.w800)),
                   const SizedBox(height: 4),
                   Text('PNG, JPG, WEBP, GIF · or try a sample below',
-                      style: _m(size: 12, weight: FontWeight.w500, color: _kSecondary)),
+                      style: _m(size: 12, weight: FontWeight.w500, color: _sec(context))),
                 ],
         ),
       ),
@@ -1020,9 +1000,9 @@ class _SampleCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _surface(context),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
           boxShadow: [
             BoxShadow(
                 color: Colors.black.withValues(alpha: 0.04),
@@ -1055,7 +1035,7 @@ class _SampleCard extends StatelessWidget {
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: _m(size: 10, weight: FontWeight.w500, color: _kSecondary)),
+                style: _m(size: 11, weight: FontWeight.w500, color: _sec(context))),
           ],
         ),
       ),
@@ -1080,7 +1060,7 @@ class _AnalysisProgress extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 20),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _surface(context),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
@@ -1096,7 +1076,7 @@ class _AnalysisProgress extends StatelessWidget {
             children: [
               AnimatedBuilder(
                 animation: pulseCtrl,
-                builder: (_, __) => Container(
+                builder: (_, _) => Container(
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
@@ -1122,9 +1102,9 @@ class _AnalysisProgress extends StatelessWidget {
                   end: (currentStep + 1) / steps.length),
               duration: const Duration(milliseconds: 320),
               curve: Curves.easeOut,
-              builder: (_, v, __) => LinearProgressIndicator(
+              builder: (_, v, _) => LinearProgressIndicator(
                 value: v,
-                backgroundColor: _kBackground,
+                backgroundColor: _bg(context),
                 valueColor: const AlwaysStoppedAnimation<Color>(_kAccent),
                 minHeight: 6,
               ),
@@ -1147,7 +1127,7 @@ class _AnalysisProgress extends StatelessWidget {
                           ? _kAccent
                           : isCurrent
                               ? _kAccent.withValues(alpha: 0.15)
-                              : _kBackground,
+                              : _bg(context),
                       shape: BoxShape.circle,
                       border: isCurrent
                           ? Border.all(color: _kAccent, width: 2)
@@ -1160,7 +1140,7 @@ class _AnalysisProgress extends StatelessWidget {
                           : isCurrent
                               ? AnimatedBuilder(
                                   animation: pulseCtrl,
-                                  builder: (_, __) => Container(
+                                  builder: (_, _) => Container(
                                     width: 6,
                                     height: 6,
                                     decoration: BoxDecoration(
@@ -1180,10 +1160,10 @@ class _AnalysisProgress extends StatelessWidget {
                       size: 12,
                       weight: isCurrent ? FontWeight.w700 : FontWeight.w500,
                       color: isDone
-                          ? _kSecondary
+                          ? _sec(context)
                           : isCurrent
-                              ? _kPrimary
-                              : const Color(0xFFCBD5E1),
+                              ? Theme.of(context).colorScheme.onSurface
+                              : _sec(context),
                     ),
                   ),
                 ],
@@ -1198,7 +1178,8 @@ class _AnalysisProgress extends StatelessWidget {
 
 // ── Results panel ─────────────────────────────────────────────────────────────
 class _ResultsPanel extends StatelessWidget {
-  const _ResultsPanel({required this.sample, required this.onReset});
+  const _ResultsPanel({required this.sample, required this.onReset, this.photoBytes});
+  final Uint8List? photoBytes;
   final _SampleImage sample;
   final VoidCallback onReset;
 
@@ -1215,7 +1196,7 @@ class _ResultsPanel extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _surface(context),
             borderRadius: BorderRadius.circular(24),
             border: Border(
               top: BorderSide(color: sample.verdictColor, width: 3),
@@ -1233,20 +1214,27 @@ class _ResultsPanel extends StatelessWidget {
               Row(
                 children: [
                   // Thumbnail
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                          colors: sample.gradient,
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight),
+                  if (photoBytes != null)
+                    ClipRRect(
                       borderRadius: BorderRadius.circular(16),
+                      child: Image.memory(photoBytes!,
+                          width: 56, height: 56, fit: BoxFit.cover),
+                    )
+                  else
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                            colors: sample.gradient,
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Center(
+                          child: Text(sample.emoji,
+                              style: const TextStyle(fontSize: 24))),
                     ),
-                    child: Center(
-                        child: Text(sample.emoji,
-                            style: const TextStyle(fontSize: 24))),
-                  ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -1259,7 +1247,7 @@ class _ResultsPanel extends StatelessWidget {
                             style: _m(
                                 size: 12,
                                 weight: FontWeight.w500,
-                                color: _kSecondary)),
+                                color: _sec(context))),
                       ],
                     ),
                   ),
@@ -1321,7 +1309,7 @@ class _ResultsPanel extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: _kBackground,
+                  color: _bg(context),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
@@ -1329,7 +1317,6 @@ class _ResultsPanel extends StatelessWidget {
                   style: _m(
                       size: 12,
                       weight: FontWeight.w600,
-                      color: _kPrimary,
                       height: 1.65),
                 ),
               ),
@@ -1344,39 +1331,25 @@ class _ResultsPanel extends StatelessWidget {
             Text('Detection Checks',
                 style: _m(size: 16, weight: FontWeight.w900)),
             const Spacer(),
-            Text('6 scans run',
-                style: _m(size: 12, weight: FontWeight.w600, color: _kSecondary)),
+            Text('${sample.checks.length} scans run',
+                style: _m(size: 12, weight: FontWeight.w600, color: _sec(context))),
           ],
         ),
         const SizedBox(height: 12),
         ...sample.checks.asMap().entries.map((e) => Padding(
               padding: EdgeInsets.only(
                   bottom: e.key < sample.checks.length - 1 ? 10 : 0),
-              child: _CheckCard(result: e.value),
+              child: _StaggerIn(index: e.key, child: _CheckCard(result: e.value)),
             )),
         const SizedBox(height: 16),
 
         // ── Analyze another ──────────────────────────────────────────────
-        _PressBtn(
+        GlassButton(
+          label: 'Analyze Another Image →',
+          accent: _kAccent,
+          height: 52,
+          radius: 14,
           onTap: onReset,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              color: _kAccent,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                    color: _kAccent.withValues(alpha: 0.3),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6)),
-              ],
-            ),
-            child: Text('Analyze Another Image →',
-                textAlign: TextAlign.center,
-                style: _m(
-                    size: 14, weight: FontWeight.w700, color: Colors.white)),
-          ),
         ),
         const SizedBox(height: 16),
       ],
@@ -1399,7 +1372,7 @@ class _ScoreRing extends StatelessWidget {
       tween: Tween(begin: 0.0, end: score / 100),
       duration: const Duration(milliseconds: 1000),
       curve: Curves.easeOut,
-      builder: (_, progress, __) => SizedBox(
+      builder: (_, progress, _) => SizedBox(
         width: size,
         height: size,
         child: Stack(
@@ -1407,7 +1380,11 @@ class _ScoreRing extends StatelessWidget {
           children: [
             CustomPaint(
               size: const Size(size, size),
-              painter: _RingPainter(progress: progress, color: color, sw: sw),
+              painter: _RingPainter(
+                  progress: progress,
+                  color: color,
+                  sw: sw,
+                  track: Theme.of(context).colorScheme.outlineVariant),
             ),
             Column(
               mainAxisSize: MainAxisSize.min,
@@ -1415,17 +1392,17 @@ class _ScoreRing extends StatelessWidget {
                 Text(
                   '${(progress * 100).round()}',
                   style: _m(
-                      size: 22, weight: FontWeight.w900, color: _kPrimary),
+                      size: 22, weight: FontWeight.w900),
                 ),
                 Text('/100',
                     style: _m(
-                        size: 9, weight: FontWeight.w700, color: _kSecondary)),
+                        size: 11, weight: FontWeight.w700, color: _sec(context))),
                 const SizedBox(height: 1),
                 Text('Auth. Score',
                     style: _m(
-                        size: 9,
+                        size: 11,
                         weight: FontWeight.w600,
-                        color: _kSecondary)),
+                        color: _sec(context))),
               ],
             ),
           ],
@@ -1437,7 +1414,8 @@ class _ScoreRing extends StatelessWidget {
 
 class _RingPainter extends CustomPainter {
   const _RingPainter(
-      {required this.progress, required this.color, required this.sw});
+      {required this.progress, required this.color, required this.sw, required this.track});
+  final Color track;
   final double progress;
   final Color color;
   final double sw;
@@ -1452,7 +1430,7 @@ class _RingPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = sw
-        ..color = const Color(0xFFE2E8F0),
+        ..color = track,
     );
     if (progress > 0) {
       canvas.drawArc(
@@ -1470,7 +1448,8 @@ class _RingPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_RingPainter old) => old.progress != progress;
+  bool shouldRepaint(_RingPainter old) =>
+      old.progress != progress || old.track != track;
 }
 
 // ── Status pill ───────────────────────────────────────────────────────────────
@@ -1490,7 +1469,7 @@ class _StatusPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text('$count $label',
-          style: _m(size: 10, weight: FontWeight.w700, color: color)),
+          style: _m(size: 11, weight: FontWeight.w700, color: color)),
     );
   }
 }
@@ -1502,6 +1481,7 @@ class _CheckCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = _dark(context);
     final (bg, border, iconBg, statusColor, statusText) =
         switch (result.status) {
       _CheckStatus.pass => (
@@ -1530,9 +1510,9 @@ class _CheckCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: bg,
+        color: dark ? statusColor.withValues(alpha: 0.10) : bg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: border),
+        border: Border.all(color: dark ? statusColor.withValues(alpha: 0.35) : border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1541,7 +1521,7 @@ class _CheckCard extends StatelessWidget {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _surface(context),
               borderRadius: BorderRadius.circular(11),
               boxShadow: [
                 BoxShadow(
@@ -1574,7 +1554,7 @@ class _CheckCard extends StatelessWidget {
                       ),
                       child: Text(statusText,
                           style: _m(
-                              size: 9,
+                              size: 11,
                               weight: FontWeight.w800,
                               color: statusColor,
                               spacing: 0.5)),
@@ -1586,7 +1566,7 @@ class _CheckCard extends StatelessWidget {
                     style: _m(
                         size: 11,
                         weight: FontWeight.w500,
-                        color: _kSecondary,
+                        color: _sec(context),
                         height: 1.55)),
               ],
             ),
@@ -1610,9 +1590,9 @@ class _TipCard extends StatelessWidget {
         padding:
             const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFEFF6FF),
+          color: _dark(context) ? AppColors.sky.withValues(alpha: 0.10) : const Color(0xFFEFF6FF),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFBFDBFE)),
+          border: Border.all(color: AppColors.sky.withValues(alpha: 0.45)),
         ),
         child: Row(
           children: [
@@ -1626,12 +1606,128 @@ class _TipCard extends StatelessWidget {
                 style: _m(
                     size: 12,
                     weight: FontWeight.w600,
-                    color: const Color(0xFF1E40AF),
+                    color: _dark(context) ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF),
                     height: 1.55),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Uploaded photo with an animated scan-line sweep ──────────────────────────
+class _ScanPhoto extends StatelessWidget {
+  const _ScanPhoto({
+    required this.bytes,
+    required this.height,
+    required this.radius,
+    required this.scanning,
+    required this.ctrl,
+  });
+  final Uint8List bytes;
+  final double height, radius;
+  final bool scanning;
+  final AnimationController ctrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: SizedBox(
+        width: double.infinity,
+        height: height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(bytes, fit: BoxFit.cover),
+            if (scanning)
+              AnimatedBuilder(
+                animation: ctrl,
+                builder: (_, _) {
+                  final t = Curves.easeInOut.transform(ctrl.value);
+                  final y = t * (height - 3);
+                  return Stack(
+                    children: [
+                      Positioned(
+                        top: (y - 44).clamp(0.0, height),
+                        left: 0,
+                        right: 0,
+                        height: 44,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                _kAccent.withValues(alpha: 0),
+                                _kAccent.withValues(alpha: 0.28),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: y,
+                        left: 0,
+                        right: 0,
+                        height: 3,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: _kAccent,
+                            boxShadow: [
+                              BoxShadow(
+                                  color: _kAccent.withValues(alpha: 0.9),
+                                  blurRadius: 10,
+                                  spreadRadius: 1),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Staggered fade + slide entrance ──────────────────────────────────────────
+class _StaggerIn extends StatefulWidget {
+  const _StaggerIn({required this.index, required this.child});
+  final int index;
+  final Widget child;
+
+  @override
+  State<_StaggerIn> createState() => _StaggerInState();
+}
+
+class _StaggerInState extends State<_StaggerIn> {
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: 80 * widget.index), () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _visible ? 1 : 0,
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _visible ? Offset.zero : const Offset(0, 0.25),
+        duration: const Duration(milliseconds: 380),
+        curve: Curves.easeOut,
+        child: widget.child,
       ),
     );
   }

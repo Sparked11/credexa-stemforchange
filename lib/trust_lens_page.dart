@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/analysis_result.dart';
 import 'services/analysis_service.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const _kLens  = Color(0xFF00BFFF);
@@ -1114,6 +1116,7 @@ class _TrustLensState extends State<TrustLensPage>
   }
 
   Future<void> _toggleArTorch() async {
+    HapticFeedback.lightImpact();
     final next = !_arTorchOn;
     await _arChannel?.invokeMethod<void>('setTorch', {'on': next});
     if (mounted) setState(() => _arTorchOn = next);
@@ -1190,7 +1193,10 @@ class _TrustLensState extends State<TrustLensPage>
                             children: [
                               _arHudButton(
                                 icon: Icons.arrow_back_ios_new_rounded,
-                                onTap: () => Navigator.of(context).pop(),
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.of(context).pop();
+                                },
                               ),
                               const SizedBox(width: 12),
                               const Text(
@@ -1326,7 +1332,17 @@ class _TrustLensState extends State<TrustLensPage>
           else if (!_hasError)
             const Center(child: _BootView()),
 
-          if (_hasError) Center(child: _ErrorView(message: _errorMsg)),
+          if (_hasError)
+            Center(
+              child: _ErrorView(
+                message: _errorMsg,
+                onRetry: () {
+                  HapticFeedback.lightImpact();
+                  setState(() { _hasError = false; _errorMsg = ''; });
+                  _initCamera();
+                },
+              ),
+            ),
 
           // ── AR overlay + gesture layer ────────────────────────────────────
           if (_isReady)
@@ -1519,22 +1535,30 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              children: [
-                const SizedBox(height: 36),
-                _buildScanner(),
-                const SizedBox(height: 36),
-                _buildTitle(),
-                const SizedBox(height: 30),
-                _buildFeatures(),
-                const Spacer(),
-                _buildConsent(),
-                const SizedBox(height: 20),
-                _buildButton(),
-                const SizedBox(height: 36),
-              ],
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 24),
+                      _buildScanner(),
+                      const SizedBox(height: 32),
+                      _buildTitle(),
+                      const SizedBox(height: 28),
+                      _buildFeatures(),
+                      const Spacer(),
+                      _buildConsent(),
+                      const SizedBox(height: 20),
+                      _buildButton(),
+                      const SizedBox(height: 28),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -1646,7 +1670,7 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
           style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 13,
-            color: Colors.white.withValues(alpha: 0.50),
+            color: Colors.white.withValues(alpha: 0.8),
             height: 1.55,
           ),
         ),
@@ -1704,7 +1728,7 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
                       style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 11.5,
-                        color: Colors.white.withValues(alpha: 0.42),
+                        color: Colors.white.withValues(alpha: 0.8),
                         height: 1.4,
                       ),
                     ),
@@ -1741,8 +1765,8 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
               'No images or video are ever stored or transmitted.',
               style: TextStyle(
                 fontFamily: 'Montserrat',
-                fontSize: 10.5,
-                color: Colors.white.withValues(alpha: 0.38),
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.8),
                 height: 1.55,
               ),
             ),
@@ -1753,48 +1777,14 @@ class _TrustLensIntroState extends State<_TrustLensIntro>
   }
 
   Widget _buildButton() {
-    return GestureDetector(
+    return GlassButton(
       onTap: _handleStart,
-      child: AnimatedBuilder(
-        animation: _pulseCtrl,
-        builder: (_, _) => Container(
-          width: double.infinity,
-          height: 56,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-              colors: [
-                _kLens,
-                Color.lerp(
-                  _kLens,
-                  const Color(0xFF0077E6),
-                  0.55 + _pulseCtrl.value * 0.25,
-                )!,
-              ],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: _kLens.withValues(
-                    alpha: 0.32 + _pulseCtrl.value * 0.18),
-                blurRadius: 22,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Text(
-              'Enable Camera & Start',
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontWeight: FontWeight.w800,
-                fontSize: 15,
-                color: Colors.white,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-        ),
-      ),
+      label: 'Enable Camera & Start',
+      accent: _kLens,
+      onDark: true,
+      height: 56,
+      fontSize: 15,
+      haptic: GlassHaptic.none,
     );
   }
 }
@@ -1994,7 +1984,7 @@ class _OverlayPainter extends CustomPainter {
       text: TextSpan(
         text: ' $label ',
         style: const TextStyle(
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: FontWeight.w800,
           color: Colors.white,
           fontFamily: 'Montserrat',
@@ -2044,7 +2034,7 @@ class _OverlayPainter extends CustomPainter {
       text: const TextSpan(
         text: ' 👤 FACE ',
         style: TextStyle(
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: FontWeight.w900,
           color: Colors.white,
           fontFamily: 'Montserrat',
@@ -2094,7 +2084,7 @@ class _OverlayPainter extends CustomPainter {
       text: TextSpan(
         text: ' $label ',
         style: const TextStyle(
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: FontWeight.w900,
           color: Colors.white,
           fontFamily: 'Montserrat',
@@ -2169,7 +2159,10 @@ class _TopBar extends StatelessWidget {
             children: [
               // Back button
               GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  Navigator.of(context).pop();
+                },
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
@@ -2189,7 +2182,10 @@ class _TopBar extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Row(
                       children: [
                         const Text(
                           'TRUST LENS',
@@ -2205,6 +2201,7 @@ class _TopBar extends StatelessWidget {
                         _LivePill(isScanning: isScanning),
                       ],
                     ),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       isScanning
@@ -2212,11 +2209,13 @@ class _TopBar extends StatelessWidget {
                           : flagCount > 0
                               ? '$flagCount signal${flagCount == 1 ? '' : 's'} detected'
                               : 'Point at any screen to scan',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: FontWeight.w500,
-                        color: Colors.white.withValues(alpha: 0.5),
+                        color: Colors.white.withValues(alpha: 0.8),
                       ),
                     ),
                   ],
@@ -2276,9 +2275,9 @@ class _HUDBadge extends StatelessWidget {
             sub,
             style: TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 7,
+              fontSize: 11,
               fontWeight: FontWeight.w800,
-              color: Colors.white.withValues(alpha: 0.5),
+              color: Colors.white.withValues(alpha: 0.8),
               letterSpacing: 0.8,
             ),
           ),
@@ -2338,7 +2337,7 @@ class _LivePillState extends State<_LivePill>
               widget.isScanning ? 'SCANNING' : 'LIVE',
               style: TextStyle(
                 fontFamily: 'Montserrat',
-                fontSize: 7,
+                fontSize: 11,
                 fontWeight: FontWeight.w900,
                 color: color,
                 letterSpacing: 0.8,
@@ -2411,7 +2410,7 @@ class _BottomBar extends StatelessWidget {
                   fontFamily: 'Montserrat',
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: Colors.white.withValues(alpha: 0.45),
+                  color: Colors.white.withValues(alpha: 0.8),
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -2441,13 +2440,13 @@ class _Chip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 10)),
+          Text(emoji, style: const TextStyle(fontSize: 11)),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: FontWeight.w700,
               color: color,
             ),
@@ -2498,7 +2497,7 @@ class _RegionSheetState extends State<_RegionSheet> {
       final r = await AnalysisService.analyzeWithSearch(widget.region.text);
       if (mounted) setState(() { _result = r; _analyzing = false; });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _analyzing = false; });
+      if (mounted) setState(() { _error = friendlyError(e); _analyzing = false; });
     }
   }
 
@@ -2562,7 +2561,7 @@ class _RegionSheetState extends State<_RegionSheet> {
                   style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 11,
-                    color: Colors.white.withValues(alpha: 0.4),
+                    color: Colors.white.withValues(alpha: 0.8),
                   ),
                 ),
               ],
@@ -2619,7 +2618,7 @@ class _RegionSheetState extends State<_RegionSheet> {
                             flag.severity == 2 ? 'HIGH' : 'MED',
                             style: TextStyle(
                               fontFamily: 'Montserrat',
-                              fontSize: 9,
+                              fontSize: 11,
                               fontWeight: FontWeight.w900,
                               color: flag.color,
                             ),
@@ -2647,22 +2646,18 @@ class _RegionSheetState extends State<_RegionSheet> {
               _AnalysisCard(result: _result!),
               const SizedBox(height: 10),
               // Still allow refreshing with full AI council
-              GestureDetector(
+              GlassButton(
                 onTap: _runAnalysis,
-                child: Center(
-                  child: Text(
-                    '🔄 Re-run AI Council Analysis',
-                    style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white.withValues(alpha: 0.35),
-                    ),
-                  ),
-                ),
+                label: '🔄 Re-run AI Council Analysis',
+                filled: false,
+                onDark: true,
+                height: 44,
+                radius: 14,
+                fontSize: 13,
+                haptic: GlassHaptic.light,
               ),
             ] else if (_analyzing)
-              const Center(
+              Center(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Column(
@@ -2673,7 +2668,7 @@ class _RegionSheetState extends State<_RegionSheet> {
                           style: TextStyle(
                               fontFamily: 'Montserrat',
                               fontSize: 12,
-                              color: Colors.white54)),
+                              color: Colors.white.withValues(alpha: 0.8))),
                     ],
                   ),
                 ),
@@ -2703,8 +2698,8 @@ class _RegionSheetState extends State<_RegionSheet> {
                             'Background verification running — result will appear on the overlay automatically.',
                             style: TextStyle(
                               fontFamily: 'Montserrat',
-                              fontSize: 10,
-                              color: Colors.white.withValues(alpha: 0.55),
+                              fontSize: 11,
+                              color: Colors.white.withValues(alpha: 0.8),
                               height: 1.4,
                             ),
                           ),
@@ -2716,36 +2711,33 @@ class _RegionSheetState extends State<_RegionSheet> {
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
-                  child: Text('Error: $_error',
-                      style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 11,
-                          color: _kRed)),
-                ),
-              GestureDetector(
-                onTap: _runAnalysis,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFF6366F1), Color(0xFF4F46E5)]),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF6366F1).withValues(alpha: 0.4),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
+                  child: _DarkTheme(
+                    child: AppErrorCard(
+                      title: 'Analysis failed',
+                      message: _error!,
+                      onRetry: () {
+                        HapticFeedback.lightImpact();
+                        _runAnalysis();
+                      },
+                    ),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('🤖', style: TextStyle(fontSize: 18)),
-                      SizedBox(width: 10),
-                      Text(
+                ),
+              GlassButton(
+                onTap: _runAnalysis,
+                onDark: true,
+                accent: const Color(0xFF6366F1),
+                height: 54,
+                haptic: GlassHaptic.light,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('🤖', style: TextStyle(fontSize: 18)),
+                    SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
                         'Run AI Council Analysis',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 14,
@@ -2753,18 +2745,18 @@ class _RegionSheetState extends State<_RegionSheet> {
                           color: Colors.white,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  'Claude · GPT-4 · Gemini will analyze this text',
+                  'Checks the text against trusted sources',
                   style: TextStyle(
                     fontFamily: 'Montserrat',
-                    fontSize: 10,
-                    color: Colors.white.withValues(alpha: 0.32),
+                    fontSize: 11,
+                    color: Colors.white.withValues(alpha: 0.8),
                   ),
                 ),
               ),
@@ -2820,7 +2812,7 @@ class _AnalysisCard extends StatelessWidget {
                       fontFamily: 'Montserrat',
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white.withValues(alpha: 0.3))),
+                      color: Colors.white.withValues(alpha: 0.8))),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -2845,7 +2837,7 @@ class _AnalysisCard extends StatelessWidget {
                 fontFamily: 'Montserrat',
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: Colors.white.withValues(alpha: 0.7),
+                color: Colors.white.withValues(alpha: 0.8),
                 height: 1.5),
           ),
           if (s.conflicts.isNotEmpty) ...[
@@ -2918,7 +2910,7 @@ class _FaceSheet extends StatelessWidget {
                     child: Text('👤', style: TextStyle(fontSize: 24))),
               ),
               const SizedBox(width: 14),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2932,7 +2924,7 @@ class _FaceSheet extends StatelessWidget {
                         style: TextStyle(
                             fontFamily: 'Montserrat',
                             fontSize: 12,
-                            color: Colors.white54)),
+                            color: Colors.white.withValues(alpha: 0.8))),
                   ],
                 ),
               ),
@@ -2947,18 +2939,21 @@ class _FaceSheet extends StatelessWidget {
               border:
                   Border.all(color: Colors.white.withValues(alpha: 0.08)),
             ),
-            child: const Text(
+            child: Text(
               'Credexa detected a human face in view. For deepfake analysis, use the Visual Scanner — it processes still images with advanced AI models to detect facial manipulation.',
               style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 12,
-                  color: Colors.white60,
+                  color: Colors.white.withValues(alpha: 0.8),
                   height: 1.6),
             ),
           ),
           const SizedBox(height: 16),
           GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              HapticFeedback.lightImpact();
+              Navigator.pop(context);
+            },
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -3003,63 +2998,79 @@ class _BootView extends StatelessWidget {
           style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 13,
-              color: Colors.white.withValues(alpha: 0.65)),
+              color: Colors.white.withValues(alpha: 0.8)),
         ),
       ],
     );
   }
 }
 
+/// Forces a dark colour scheme so shared app widgets blend into the camera UI.
+class _DarkTheme extends StatelessWidget {
+  const _DarkTheme({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: Theme.of(context).colorScheme.copyWith(
+                brightness: Brightness.dark,
+                surface: const Color(0xFF16263A),
+                onSurface: Colors.white,
+              ),
+        ),
+        child: child,
+      );
+}
+
 class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message});
+  const _ErrorView({required this.message, required this.onRetry});
   final String message;
+  final VoidCallback onRetry;
+
+  bool get _isPermission {
+    final m = message.toLowerCase();
+    return m.contains('permission') ||
+        m.contains('denied') ||
+        m.contains('accessdenied') ||
+        m.contains('not authorized');
+  }
 
   @override
   Widget build(BuildContext context) {
+    final permission = _isPermission;
+    final noCamera = message.toLowerCase().contains('no camera');
     return Padding(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(24),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('📷', style: TextStyle(fontSize: 52)),
-          const SizedBox(height: 16),
-          const Text('Camera Unavailable',
-              style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white)),
-          const SizedBox(height: 8),
-          Text(
-            message.length > 120
-                ? '${message.substring(0, 118)}…'
-                : message,
-            style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 11,
-                color: Colors.white.withValues(alpha: 0.42),
-                height: 1.5),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 28),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-                border:
-                    Border.all(color: Colors.white.withValues(alpha: 0.18)),
-              ),
-              child: const Text('Go Back',
-                  style: TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white)),
+          _DarkTheme(
+            child: AppErrorCard(
+              icon: permission
+                  ? Icons.no_photography_rounded
+                  : Icons.videocam_off_rounded,
+              title: permission ? 'Camera access needed' : 'Camera unavailable',
+              message: permission
+                  ? 'Trust Lens needs your camera to scan text. Open Settings, '
+                      'choose Credexa, and turn on Camera. Then come back and tap Try again.'
+                  : noCamera
+                      ? 'No camera was found on this device.'
+                      : friendlyError(message),
+              onRetry: noCamera ? null : onRetry,
             ),
+          ),
+          const SizedBox(height: 16),
+          GlassButton(
+            label: 'Go Back',
+            filled: false,
+            onDark: true,
+            expand: false,
+            height: 46,
+            radius: 14,
+            haptic: GlassHaptic.light,
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            onTap: () => Navigator.pop(context),
           ),
         ],
       ),
@@ -3142,7 +3153,7 @@ class _ArOverlayPainter extends CustomPainter {
           text: ' $label ',
           style: const TextStyle(
             fontFamily: 'Montserrat',
-            fontSize: 8,
+            fontSize: 11,
             fontWeight: FontWeight.w800,
             color: Colors.white,
           ),

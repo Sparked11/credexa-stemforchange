@@ -189,8 +189,8 @@ class _BiasFingerprintCardState extends State<BiasFingerprintCard>
                   // ── Header ──────────────────────────────────────────────
                   Row(
                     children: [
-                      const Text('🔏',
-                          style: TextStyle(fontSize: 18)),
+                      const Icon(Icons.fingerprint_rounded,
+                          size: 22, color: Colors.white),
                       const SizedBox(width: 8),
                       const Text(
                         'Bias Fingerprint',
@@ -281,7 +281,7 @@ class _BiasFingerprintCardState extends State<BiasFingerprintCard>
                                   BiasFingerprint.shortLabels[i],
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
-                                    fontSize: 10,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                     color: Colors.white.withValues(alpha: 0.85),
                                   ),
@@ -291,7 +291,7 @@ class _BiasFingerprintCardState extends State<BiasFingerprintCard>
                                   '${v.round()}',
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
-                                    fontSize: 10,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w800,
                                     color: c,
                                   ),
@@ -388,9 +388,9 @@ class _ChartView extends StatelessWidget {
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               fontFamily: 'Montserrat',
-                              fontSize: 9,
+                              fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: Color(0xAAFFFFFF),
+                              color: Color(0xDDFFFFFF),
                               height: 1.25,
                             ),
                           ),
@@ -398,7 +398,7 @@ class _ChartView extends StatelessWidget {
                             '${val.round()}',
                             style: TextStyle(
                               fontFamily: 'Montserrat',
-                              fontSize: 10,
+                              fontSize: 11,
                               fontWeight: FontWeight.w900,
                               color: col,
                             ),

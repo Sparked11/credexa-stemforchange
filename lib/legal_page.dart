@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'theme/app_tokens.dart';
+
 /// Terms of Service + Privacy Policy, shown from the Profile page and required
 /// for App Store review (UGC apps must present terms; a matching hosted URL
 /// goes in App Store Connect).
@@ -15,8 +17,17 @@ class LegalPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Terms & Privacy',
-            style: TextStyle(fontFamily: 'Montserrat', fontWeight: FontWeight.w800)),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        foregroundColor: cs.onSurface,
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        centerTitle: true,
+        title: Text('Terms & Privacy',
+            style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: cs.onSurface)),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
@@ -195,7 +206,7 @@ class LegalPage extends StatelessWidget {
               fontFamily: 'Montserrat',
               fontSize: 12,
               fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
             ));
       });
 
@@ -207,7 +218,7 @@ class LegalPage extends StatelessWidget {
                 fontFamily: 'Montserrat',
                 fontSize: 15,
                 fontWeight: FontWeight.w800,
-                color: Theme.of(context).colorScheme.onSurface,
+                color: AppColors.green,
               )),
         );
       });
@@ -216,10 +227,10 @@ class LegalPage extends StatelessWidget {
         return Text(text,
             style: TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.w500,
-              height: 1.55,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.75),
+              height: 1.65,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.82),
             ));
       });
 }

@@ -9,6 +9,8 @@ import 'auth_service.dart';
 import 'models/community_message.dart';
 import 'services/community_service.dart';
 import 'services/profile_service.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ── Typography helper ─────────────────────────────────────────────────────────
 TextStyle _m({
@@ -30,6 +32,14 @@ TextStyle _m({
 const _kAccent     = Color(0xFF22C55E);
 const _kReplyColor = Color(0xFF3B82F6);
 const _kAiColor    = Color(0xFF6366F1);
+
+IconData _typeIcon(MessageType type) {
+  switch (type) {
+    case MessageType.question: return Icons.person_outline_rounded;
+    case MessageType.reply:    return Icons.forum_rounded;
+    case MessageType.ai:       return Icons.auto_awesome_rounded;
+  }
+}
 
 Color _typeColor(MessageType type) {
   switch (type) {
@@ -60,6 +70,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   bool   _moderating   = false;
   bool   _isAskMode    = true;
   String? _error;
+  bool   _loaded       = false;
 
   Uint8List? _pendingImageBytes;
   String?    _pendingMimeType;
@@ -79,7 +90,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
         // With reverse:true the list always starts anchored at the newest
         // message (pixel 0). Only auto-scroll when the user is already there.
         final wasAtBottom = _isAtBottom();
-        setState(() { _messages = msgs; _error = null; });
+        setState(() { _messages = msgs; _error = null; _loaded = true; });
         if (wasAtBottom) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _scrollToNewest(animate: true));
@@ -87,7 +98,10 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       },
       onError: (_) {
         if (!mounted) return;
-        setState(() => _error = 'Could not load messages. Check your connection.');
+        setState(() {
+          _error = 'Could not load messages. Check your connection.';
+          _loaded = true;
+        });
       },
     );
   }
@@ -306,14 +320,8 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
       child: Row(
         children: [
-          Container(
-            width: 42, height: 42,
-            decoration: BoxDecoration(
-              color:        const Color(0xFF6366F1).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Center(child: Text('🌐', style: TextStyle(fontSize: 20))),
-          ),
+          const IconBadge(
+              icon: Icons.public_rounded, color: _kAiColor, size: 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -323,9 +331,9 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                     style: _m(size: 16, weight: FontWeight.w900,
                         color: cs.onSurface)),
                 Text(
-                  '${_messages.length}/50 messages · completely anonymous',
+                  'Ask, share and fact-check together · anonymous',
                   style: _m(size: 11, weight: FontWeight.w500,
-                      color: cs.onSurface.withValues(alpha: 0.55)),
+                      color: cs.onSurface.withValues(alpha: 0.7)),
                 ),
               ],
             ),
@@ -342,18 +350,33 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('⚠️', style: TextStyle(fontSize: 36)),
-              const SizedBox(height: 12),
-              Text(_error!,
-                  textAlign: TextAlign.center,
-                  style: _m(size: 13, weight: FontWeight.w500,
-                      color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
-            ],
+          padding: const EdgeInsets.all(24),
+          child: AppErrorCard(
+            title: 'Could not load the hub',
+            message: _error!,
+            onRetry: () {
+              HapticFeedback.lightImpact();
+              _sub?.cancel();
+              setState(() { _error = null; _loaded = false; });
+              _init();
+            },
           ),
+        ),
+      );
+    }
+
+    if (!_loaded) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(
+                strokeWidth: 3, color: _kAccent),
+            const SizedBox(height: 14),
+            Text('Loading conversations…',
+                style: _m(size: 13, weight: FontWeight.w600,
+                    color: cs.onSurface.withValues(alpha: 0.7))),
+          ],
         ),
       );
     }
@@ -397,7 +420,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       child: Column(
         children: [
           const SizedBox(height: 24),
-          const Text('🌐', style: TextStyle(fontSize: 56)),
+          const IconBadge(icon: Icons.public_rounded, color: _kAiColor, size: 84),
           const SizedBox(height: 18),
           Text('Community Explanation Hub',
               textAlign: TextAlign.center,
@@ -408,7 +431,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             'Ask "Is this real?" about any headline, claim, or social post — or share what you know to help others. AI analysis included. Completely anonymous.',
             textAlign: TextAlign.center,
             style: _m(size: 13, weight: FontWeight.w500,
-                color: cs.onSurface.withValues(alpha: 0.55), height: 1.65),
+                color: cs.onSurface.withValues(alpha: 0.7), height: 1.65),
           ),
           const SizedBox(height: 24),
           // Who responds card
@@ -424,7 +447,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
               children: [
                 Text('Who responds to questions:',
                     style: _m(size: 12, weight: FontWeight.w800,
-                        color: cs.onSurface.withValues(alpha: 0.55))),
+                        color: cs.onSurface.withValues(alpha: 0.7))),
                 const SizedBox(height: 12),
                 ...[
                   (MessageType.ai,    'AI Analysis',
@@ -435,22 +458,10 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Row(
                     children: [
-                      Container(
-                        width: 34, height: 34,
-                        decoration: BoxDecoration(
-                          color: _typeColor(r.$1).withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Center(
-                          child: Text(
-                            CommunityMessage(
-                              id: '', text: '', type: r.$1,
-                              timestamp: DateTime.now(),
-                            ).authorIcon,
-                            style: const TextStyle(fontSize: 15),
-                          ),
-                        ),
-                      ),
+                      IconBadge(
+                          icon: _typeIcon(r.$1),
+                          color: _typeColor(r.$1),
+                          size: 34),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
@@ -461,7 +472,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                                     color: _typeColor(r.$1))),
                             Text(r.$3,
                                 style: _m(size: 11, weight: FontWeight.w500,
-                                    color: cs.onSurface.withValues(alpha: 0.55))),
+                                    color: cs.onSurface.withValues(alpha: 0.7))),
                           ],
                         ),
                       ),
@@ -483,7 +494,8 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('💬', style: TextStyle(fontSize: 16)),
+                const Icon(Icons.chat_bubble_outline_rounded,
+                    size: 18, color: Color(0xFF3B82F6)),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -493,7 +505,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                       fontFamily:  'Montserrat',
                       fontSize:    12,
                       fontWeight:  FontWeight.w500,
-                      color:       const Color(0xFF1E40AF),
+                      color:       cs.onSurface.withValues(alpha: 0.85),
                       height:      1.55,
                     ),
                   ),
@@ -544,7 +556,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                     size:  20,
                     color: busy
                         ? cs.onSurface.withValues(alpha: 0.25)
-                        : cs.onSurface.withValues(alpha: 0.55),
+                        : cs.onSurface.withValues(alpha: 0.7),
                   ),
                 ),
               ),
@@ -564,7 +576,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
                         ? 'Ask "Is this real?"…'
                         : 'Share what you know or think…',
                     hintStyle:      _m(size: 13, weight: FontWeight.w500,
-                        color: cs.onSurface.withValues(alpha: 0.35)),
+                        color: cs.onSurface.withValues(alpha: 0.6)),
                     filled:         true,
                     fillColor:      bgColor,
                     contentPadding: const EdgeInsets.symmetric(
@@ -582,40 +594,18 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
               ),
               const SizedBox(width: 8),
               // Send button
-              GestureDetector(
-                onTap: busy ? null : _send,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 46, height: 46,
-                  decoration: BoxDecoration(
-                    color: busy
-                        ? (_isAskMode ? const Color(0xFF86EFAC) : const Color(0xFF93C5FD))
-                        : (_isAskMode ? _kAccent : _kReplyColor),
-                    shape: BoxShape.circle,
-                    boxShadow: busy
-                        ? []
-                        : [
-                            BoxShadow(
-                              color: (_isAskMode ? _kAccent : _kReplyColor)
-                                  .withValues(alpha: 0.35),
-                              blurRadius: 12,
-                              offset:     const Offset(0, 4),
-                            ),
-                          ],
-                  ),
-                  child: Center(
-                    child: busy
-                        ? SizedBox(
-                            width: 18, height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                  _moderating ? Colors.orange : Colors.white),
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded,
-                            size: 20, color: Colors.white),
-                  ),
+              SizedBox(
+                width: 46,
+                height: 46,
+                child: GlassButton(
+                  onTap: busy ? null : _send,
+                  loading: busy,
+                  icon: Icons.send_rounded,
+                  accent: _isAskMode ? _kAccent : _kReplyColor,
+                  height: 46,
+                  radius: 23,
+                  padding: EdgeInsets.zero,
+                  foreground: busy && _moderating ? Colors.orange : null,
                 ),
               ),
             ],
@@ -672,7 +662,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             style: _m(
               size:   12,
               weight: FontWeight.w700,
-              color:  selected ? Colors.white : cs.onSurface.withValues(alpha: 0.55),
+              color:  selected ? Colors.white : cs.onSurface.withValues(alpha: 0.7),
             ),
           ),
         ),
@@ -695,15 +685,15 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             ),
           ),
           GestureDetector(
-            onTap: _clearImage,
+            onTap: () { HapticFeedback.lightImpact(); _clearImage(); },
             child: Container(
               margin:     const EdgeInsets.all(4),
-              width:  22, height: 22,
+              width:  32, height: 32,
               decoration: BoxDecoration(
                 color:       Colors.black.withValues(alpha: 0.55),
                 shape:       BoxShape.circle,
               ),
-              child: const Icon(Icons.close, size: 14, color: Colors.white),
+              child: const Icon(Icons.close, size: 18, color: Colors.white),
             ),
           ),
         ],
@@ -769,7 +759,7 @@ class _MessageBubbleState extends State<_MessageBubble>
         return Padding(
           padding: const EdgeInsets.only(bottom: 5),
           child: GestureDetector(
-            onTap: () => _launchUrl(url),
+            onTap: () { HapticFeedback.lightImpact(); _launchUrl(url); },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
@@ -788,7 +778,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                       children: [
                         if (source.isNotEmpty)
                           Text(source,
-                              style: _m(size: 10, weight: FontWeight.w700,
+                              style: _m(size: 11, weight: FontWeight.w700,
                                   color: accentColor)),
                         Text(title,
                             maxLines: 2,
@@ -835,7 +825,9 @@ class _MessageBubbleState extends State<_MessageBubble>
     return GestureDetector(
       onTap: _showModerationSheet,
       behavior: HitTestBehavior.opaque,
-      child: Padding(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -853,6 +845,7 @@ class _MessageBubbleState extends State<_MessageBubble>
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -892,7 +885,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                 widget.onBlock?.call();
               }),
             _sheetAction(ctx, Icons.close_rounded, 'Cancel',
-                cs.onSurface.withValues(alpha: 0.55), () => Navigator.pop(ctx)),
+                cs.onSurface.withValues(alpha: 0.7), () => Navigator.pop(ctx)),
           ],
         ),
       ),
@@ -902,7 +895,7 @@ class _MessageBubbleState extends State<_MessageBubble>
   Widget _sheetAction(BuildContext ctx, IconData icon, String label,
       Color color, VoidCallback onTap) {
     return InkWell(
-      onTap: onTap,
+      onTap: () { HapticFeedback.lightImpact(); onTap(); },
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
@@ -956,10 +949,10 @@ class _MessageBubbleState extends State<_MessageBubble>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!_isOwn)
-                    _moderationButton(cs.onSurface.withValues(alpha: 0.55)),
+                    _moderationButton(cs.onSurface.withValues(alpha: 0.7)),
                   Text('Anonymous',
-                      style: _m(size: 10, weight: FontWeight.w700,
-                          color: cs.onSurface.withValues(alpha: 0.55))),
+                      style: _m(size: 11, weight: FontWeight.w700,
+                          color: cs.onSurface.withValues(alpha: 0.7))),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1013,14 +1006,10 @@ class _MessageBubbleState extends State<_MessageBubble>
           ),
         ),
         const SizedBox(width: 8),
-        Container(
-          width: 32, height: 32,
-          decoration: BoxDecoration(
-            color: _kAccent.withValues(alpha: 0.15),
-            shape: BoxShape.circle,
-          ),
-          child: const Center(child: Text('👤', style: TextStyle(fontSize: 14))),
-        ),
+        IconBadge(
+            icon: _typeIcon(MessageType.question),
+            color: _kAccent,
+            size: 32),
       ],
     );
   }
@@ -1029,6 +1018,7 @@ class _MessageBubbleState extends State<_MessageBubble>
   Widget _buildResponder() {
     final cs = Theme.of(context).colorScheme;
     final color   = _typeColor(widget.message.type);
+    final isAi    = widget.message.type == MessageType.ai;
     final bytes   = widget.message.imageBytes;
     final myEmoji = widget.currentUserId != null
         ? widget.message.userReactions[widget.currentUserId!]
@@ -1037,17 +1027,8 @@ class _MessageBubbleState extends State<_MessageBubble>
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 34, height: 34,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(widget.message.authorIcon,
-                style: const TextStyle(fontSize: 15)),
-          ),
-        ),
+        IconBadge(
+            icon: _typeIcon(widget.message.type), color: color, size: 34),
         const SizedBox(width: 8),
         Flexible(
           child: Column(
@@ -1056,8 +1037,22 @@ class _MessageBubbleState extends State<_MessageBubble>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (isAi) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text('AI',
+                          style: _m(size: 11, weight: FontWeight.w900,
+                              color: Colors.white, spacing: 0.5)),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   Text(widget.message.authorLabel,
-                      style: _m(size: 10, weight: FontWeight.w800, color: color)),
+                      style: _m(size: 11, weight: FontWeight.w800, color: color)),
                   if (!_isOwn) _moderationButton(color),
                 ],
               ),
@@ -1065,14 +1060,19 @@ class _MessageBubbleState extends State<_MessageBubble>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: cs.surface,
+                  color: isAi
+                      ? Color.alphaBlend(
+                          color.withValues(alpha: 0.10), cs.surface)
+                      : cs.surface,
                   borderRadius: const BorderRadius.only(
                     topLeft:     Radius.circular(4),
                     topRight:    Radius.circular(18),
                     bottomLeft:  Radius.circular(18),
                     bottomRight: Radius.circular(18),
                   ),
-                  border:     Border.all(color: color.withValues(alpha: 0.2)),
+                  border:     Border.all(
+                      color: color.withValues(alpha: isAi ? 0.45 : 0.2),
+                      width: isAi ? 1.4 : 1),
                   boxShadow:  [
                     BoxShadow(
                       color:      Colors.black.withValues(alpha: 0.05),
@@ -1116,11 +1116,14 @@ class _MessageBubbleState extends State<_MessageBubble>
                     children: widget.message.reactions.entries.map((e) {
                       final isMe = myEmoji == e.key;
                       return GestureDetector(
-                        onTap: () => _tap(e.key),
+                        onTap: () { HapticFeedback.selectionClick(); _tap(e.key); },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
+                          constraints: const BoxConstraints(
+                              minHeight: 36, minWidth: 48),
+                          alignment: Alignment.center,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 12, vertical: 4),
                           decoration: BoxDecoration(
                             color: isMe
                                 ? color.withValues(alpha: 0.15)
@@ -1143,7 +1146,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                                   style: _m(
                                     size:   11,
                                     weight: FontWeight.w700,
-                                    color:  isMe ? color : cs.onSurface.withValues(alpha: 0.55),
+                                    color:  isMe ? color : cs.onSurface.withValues(alpha: 0.7),
                                   )),
                             ],
                           ),
@@ -1162,7 +1165,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                       },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
-                        width: 28, height: 28,
+                        width: 36, height: 36,
                         decoration: BoxDecoration(
                           color: _pickerOpen
                               ? color.withValues(alpha: 0.15)
@@ -1175,8 +1178,8 @@ class _MessageBubbleState extends State<_MessageBubble>
                         child: Center(
                           child: Icon(
                             _pickerOpen ? Icons.close : Icons.add,
-                            size:  14,
-                            color: _pickerOpen ? color : cs.onSurface.withValues(alpha: 0.55),
+                            size:  18,
+                            color: _pickerOpen ? color : cs.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
                       ),
@@ -1203,15 +1206,16 @@ class _MessageBubbleState extends State<_MessageBubble>
                       ),
                     ],
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceEvenly,
+                    runSpacing: 4,
                     children: _allEmojis.map((emoji) {
                       final isActive = myEmoji == emoji;
                       return GestureDetector(
-                        onTap: () => _tap(emoji),
+                        onTap: () { HapticFeedback.selectionClick(); _tap(emoji); },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 120),
-                          width: 32, height: 32,
+                          width: 38, height: 38,
                           decoration: BoxDecoration(
                             color: isActive
                                 ? color.withValues(alpha: 0.15)
@@ -1272,14 +1276,8 @@ class _TypingIndicatorState extends State<_TypingIndicator>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Container(
-            width: 34, height: 34,
-            decoration: BoxDecoration(
-              color: _kAiColor.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(child: Text('🔍', style: TextStyle(fontSize: 15))),
-          ),
+          const IconBadge(
+              icon: Icons.auto_awesome_rounded, color: _kAiColor, size: 34),
           const SizedBox(width: 8),
           Container(
             padding:     const EdgeInsets.symmetric(horizontal: 16, vertical: 13),

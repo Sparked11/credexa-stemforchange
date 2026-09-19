@@ -1,3 +1,4 @@
+import 'widgets/adaptive_chrome.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,9 @@ import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
 import 'services/shared_content_router.dart';
 import 'services/user_progress_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 const _kPrimary    = Color(0xFF1E293B);
@@ -30,6 +34,14 @@ TextStyle _m({
       height: height,
       letterSpacing: spacing,
     );
+
+Color _amberText(BuildContext c) => _isDark(c) ? const Color(0xFFFCD34D) : const Color(0xFF92400E);
+Color _greenText(BuildContext c) => _isDark(c) ? const Color(0xFF86EFAC) : const Color(0xFF15803D);
+bool _isDark(BuildContext c) => Theme.of(c).brightness == Brightness.dark;
+Color _tint(BuildContext c, Color accent, Color light) =>
+    _isDark(c) ? accent.withValues(alpha: 0.10) : light;
+Color _tintBorder(BuildContext c, Color accent, Color light) =>
+    _isDark(c) ? accent.withValues(alpha: 0.35) : light;
 
 // ── Bias pattern glossary ─────────────────────────────────────────────────────
 class _GlossaryEntry {
@@ -130,52 +142,6 @@ const _glossary = <String, _GlossaryEntry>{
   ),
 };
 
-// ── Press-animation wrapper ───────────────────────────────────────────────────
-class _PressBtn extends StatefulWidget {
-  const _PressBtn({required this.child, this.onTap});
-  final Widget child;
-  final VoidCallback? onTap;
-
-  @override
-  State<_PressBtn> createState() => _PressBtnState();
-}
-
-class _PressBtnState extends State<_PressBtn>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-      lowerBound: 0,
-      upperBound: 0.06,
-    );
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) { _c.forward(); HapticFeedback.mediumImpact(); },
-      onTapUp: (_) { _c.reverse(); widget.onTap?.call(); },
-      onTapCancel: () => _c.reverse(),
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (_, child) => Transform.scale(scale: 1 - _c.value, child: child),
-        child: widget.child,
-      ),
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  DE-BIAS PAGE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,20 +174,7 @@ class _DebiasPageState extends State<DebiasPage> {
   }
 
   Widget _buildNavbar() {
-    final cs = Theme.of(context).colorScheme;
-    final bgColor = Theme.of(context).scaffoldBackgroundColor;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      height: 64,
-      decoration: BoxDecoration(
-        color: _scrolled ? cs.surface : bgColor,
-        border: _scrolled
-            ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
-            : null,
-        boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
-            : [],
-      ),
+    return GlassTopBar.simple(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -290,6 +243,7 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
   bool _rewriting = false;
   bool _showResults = false;
   String? _error;
+  VoidCallback? _errorRetry;
   DebiasResult? _result;
   late final AnimationController _resultsCtrl;
   int?  _userPredictionScore;  // 1-100 slider value, set before result arrives
@@ -372,6 +326,7 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
           _rewriting = false;
           _error = 'Could not extract post content from this link. '
               'Try sharing a screenshot of the post instead.';
+          _errorRetry = () => _extractAndRewriteUrl(url);
         });
       }
     } catch (_) {
@@ -381,15 +336,27 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
         _rewriting = false;
         _error = 'Could not extract post content from this link. '
             'Try sharing a screenshot of the post instead.';
+        _errorRetry = () => _extractAndRewriteUrl(url);
       });
     }
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1920);
-    if (picked == null || !mounted) return;
-    final bytes = await picked.readAsBytes();
+    final XFile picked;
+    final Uint8List bytes;
+    try {
+      final f = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1920);
+      if (f == null || !mounted) return;
+      picked = f;
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not open your photo library. Check Photos access in Settings and try again.';
+        _errorRetry = _pickImage;
+      });
+      return;
+    }
     setState(() {
       _imageBytes = bytes;
       _imageMimeType = picked.mimeType ?? 'image/jpeg';
@@ -400,10 +367,21 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
   }
 
   Future<void> _takePhoto() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 1920);
-    if (picked == null || !mounted) return;
-    final bytes = await picked.readAsBytes();
+    final XFile picked;
+    final Uint8List bytes;
+    try {
+      final f = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 1920);
+      if (f == null || !mounted) return;
+      picked = f;
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Camera is unavailable. Enable camera access in Settings > Credexa, then try again.';
+        _errorRetry = _takePhoto;
+      });
+      return;
+    }
     setState(() {
       _imageBytes = bytes;
       _imageMimeType = picked.mimeType ?? 'image/jpeg';
@@ -426,7 +404,7 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
     final hasImage = _imageBytes != null;
     if (text.isEmpty && !hasImage) return;
     if (text.length > 4000) {
-      setState(() => _error = 'Text is too long. Please shorten it to under 4,000 characters.');
+      setState(() { _error = 'Text is too long. Please shorten it to under 4,000 characters.'; _errorRetry = null; });
       return;
     }
 
@@ -474,7 +452,8 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
       if (!mounted) return;
       setState(() {
         _rewriting = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = friendlyError(e);
+        _errorRetry = _rewrite;
       });
     }
   }
@@ -508,8 +487,8 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
               style: _m(size: 32, weight: FontWeight.w900, height: 1.1, color: cs.onSurface)),
           const SizedBox(height: 8),
           Text(
-            'Paste any text or share a screenshot. GPT rewrites it in balanced language and shows you exactly what bias techniques were used — from three different perspectives.',
-            style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.65),
+            'Paste any text or share a screenshot. AI rewrites it in balanced language and shows you exactly what bias techniques were used — from three different perspectives.',
+            style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.65),
           ),
           const SizedBox(height: 24),
 
@@ -552,30 +531,25 @@ class _DebiasToolSectionState extends State<_DebiasToolSection>
           ],
 
           if (_error != null) ...[
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: cs.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFFECACA)),
-              ),
-              child: Row(
-                children: [
-                  const Text('⚠️', style: TextStyle(fontSize: 16)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(_error!,
-                        style: _m(size: 13, weight: FontWeight.w500, color: const Color(0xFFDC2626), height: 1.5)),
-                  ),
-                ],
-              ),
+            AppErrorCard(
+              title: 'Couldn\'t complete that',
+              message: _error!,
+              icon: Icons.error_outline_rounded,
+              onRetry: _errorRetry == null
+                  ? null
+                  : () {
+                      HapticFeedback.lightImpact();
+                      final retry = _errorRetry!;
+                      setState(() { _error = null; _errorRetry = null; });
+                      retry();
+                    },
             ),
             const SizedBox(height: 16),
           ],
 
           if (!_showResults && !_rewriting) ...[
             Text('Try an example:',
-                style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
+                style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7))),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -618,7 +592,7 @@ class _Label extends StatelessWidget {
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text(text,
-          style: _m(size: 10, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
+          style: _m(size: 11, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
     );
   }
 }
@@ -644,7 +618,7 @@ class _ExampleChip extends StatelessWidget {
             BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))
           ],
         ),
-        child: Text(label, style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+        child: Text(label, style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
       ),
     );
   }
@@ -732,8 +706,8 @@ class _InputCard extends StatelessWidget {
                               style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface),
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                           const SizedBox(height: 2),
-                          Text('GPT will extract text & de-bias it',
-                              style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+                          Text('AI will extract text & de-bias it',
+                              style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
                         ],
                       ),
                     ),
@@ -742,7 +716,7 @@ class _InputCard extends StatelessWidget {
                       child: Container(
                         width: 26, height: 26,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEE2E2),
+                          color: AppColors.red.withValues(alpha: 0.14),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Center(child: Icon(Icons.close, size: 14, color: Color(0xFFDC2626))),
@@ -762,7 +736,7 @@ class _InputCard extends StatelessWidget {
                 style: _m(size: 14, weight: FontWeight.w500, height: 1.65, color: cs.onSurface),
                 decoration: InputDecoration(
                   hintText: 'Paste a headline, social post, or paragraph with loaded or emotional language…',
-                  hintStyle: _m(size: 13, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.45), height: 1.6),
+                  hintStyle: _m(size: 13, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.6),
                   filled: true,
                   fillColor: bgColor,
                   contentPadding: const EdgeInsets.all(16),
@@ -776,32 +750,28 @@ class _InputCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: _PressBtn(
+                  child: GlassButton(
                     onTap: onPickImage,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      decoration: BoxDecoration(color: _kPrimary, borderRadius: BorderRadius.circular(12)),
-                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        const Icon(Icons.photo_library_rounded, size: 16, color: Colors.white),
-                        const SizedBox(width: 6),
-                        Text('Gallery', style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                      ]),
-                    ),
+                    label: 'Gallery',
+                    icon: Icons.photo_library_rounded,
+                    accent: _kPrimary,
+                    height: 46,
+                    radius: 14,
+                    fontSize: 13,
+                    haptic: GlassHaptic.light,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: _PressBtn(
+                  child: GlassButton(
                     onTap: onTakePhoto,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      decoration: BoxDecoration(color: _kAccent, borderRadius: BorderRadius.circular(12)),
-                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        const Icon(Icons.camera_alt_rounded, size: 16, color: Colors.white),
-                        const SizedBox(width: 6),
-                        Text('Camera', style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                      ]),
-                    ),
+                    label: 'Camera',
+                    icon: Icons.camera_alt_rounded,
+                    accent: _kAccent,
+                    height: 46,
+                    radius: 14,
+                    fontSize: 13,
+                    haptic: GlassHaptic.light,
                   ),
                 ),
               ],
@@ -809,45 +779,17 @@ class _InputCard extends StatelessWidget {
 
             const SizedBox(height: 12),
 
-            _PressBtn(
+            GlassButton(
               onTap: onRewrite,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  gradient: rewriting
-                      ? null
-                      : const LinearGradient(
-                          colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                  color: rewriting ? const Color(0xFF86EFAC) : null,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: rewriting ? [] : [
-                    BoxShadow(color: _kAccent.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: rewriting
-                      ? [
-                          const SizedBox(width: 18, height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white))),
-                          const SizedBox(width: 10),
-                          Text(_hasImage ? 'Extracting & Rewriting…' : 'Rewriting…',
-                              style: _m(size: 15, weight: FontWeight.w800, color: Colors.white)),
-                        ]
-                      : [
-                          const Text('✍️', style: TextStyle(fontSize: 16)),
-                          const SizedBox(width: 8),
-                          Text(_hasImage ? 'Extract Text & De-Bias' : 'Rewrite in Neutral Tone',
-                              style: _m(size: 15, weight: FontWeight.w800, color: Colors.white)),
-                        ],
-                ),
-              ),
+              loading: rewriting,
+              accent: AppColors.green,
+              height: 56,
+              radius: 16,
+              fontSize: 15,
+              icon: Icons.edit_note_rounded,
+              label: rewriting
+                  ? (_hasImage ? 'Extracting & Rewriting…' : 'Rewriting…')
+                  : (_hasImage ? 'Extract Text & De-Bias' : 'Rewrite in Neutral Tone'),
             ),
           ],
         ),
@@ -885,7 +827,7 @@ class _ResultsPanel extends StatelessWidget {
               decoration: BoxDecoration(
                 color: cs.surface,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFBFDBFE)),
+                border: Border.all(color: AppColors.sky.withValues(alpha: 0.45)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -894,7 +836,7 @@ class _ResultsPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text('Text extracted from image: "${result.extractedText}"',
-                        style: _m(size: 12, weight: FontWeight.w500, color: const Color(0xFF1E40AF), height: 1.5)),
+                        style: _m(size: 12, weight: FontWeight.w500, color: _isDark(context) ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF), height: 1.5)),
                   ),
                 ],
               ),
@@ -906,8 +848,8 @@ class _ResultsPanel extends StatelessWidget {
         _TextCompareCard(
           label: 'ORIGINAL',
           labelColor: const Color(0xFFEF4444),
-          bgColor: const Color(0xFFFFF5F5),
-          borderColor: const Color(0xFFFECACA),
+          bgColor: _tint(context, AppColors.red, const Color(0xFFFFF5F5)),
+          borderColor: _tintBorder(context, AppColors.red, const Color(0xFFFECACA)),
           icon: '⚠️',
           text: result.originalText,
         ),
@@ -923,75 +865,40 @@ class _ResultsPanel extends StatelessWidget {
 
         // ── Feature #3: What Changed (with tappable glossary) ──
         if (result.changes.isNotEmpty) ...[
-          Builder(builder: (context) {
-            final cs = Theme.of(context).colorScheme;
-            return Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: cs.surface,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6))],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 36, height: 36,
-                        decoration: BoxDecoration(
-                          color: _kAccent.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Center(child: Text('🔍', style: TextStyle(fontSize: 17))),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('What We Changed', style: _m(size: 15, weight: FontWeight.w900, color: cs.onSurface)),
-                            Text(
-                              '${result.changes.length} bias pattern${result.changes.length == 1 ? '' : 's'} removed  •  tap any to learn more',
-                              style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55)),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  ...result.changes.asMap().entries.map((e) => Padding(
-                        padding: EdgeInsets.only(bottom: e.key < result.changes.length - 1 ? 14 : 0),
-                        child: _ChangeRow(item: e.value),
-                      )),
-                ],
-              ),
-            );
-          }),
+          _ExpandCard(
+            icon: '🔍',
+            iconColor: _kAccent,
+            title: 'What We Changed',
+            subtitle:
+                '${result.changes.length} bias pattern${result.changes.length == 1 ? '' : 's'} removed  •  tap to expand',
+            elevated: true,
+            children: result.changes
+                .asMap()
+                .entries
+                .map((e) => Padding(
+                      padding: EdgeInsets.only(
+                          bottom: e.key < result.changes.length - 1 ? 14 : 0),
+                      child: _ChangeRow(item: e.value),
+                    ))
+                .toList(),
+          ),
           const SizedBox(height: 16),
         ],
 
         Builder(builder: (context) {
           final cs = Theme.of(context).colorScheme;
-          return Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: cs.outlineVariant),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Why This Matters', style: _m(size: 13, weight: FontWeight.w900, color: cs.onSurface)),
-                const SizedBox(height: 12),
-                ...[
-                  ('🧠', 'Emotional words activate your brain\'s fear response before you can think critically.'),
-                  ('⚖️', 'Neutral language gives you the facts — and lets you form your own opinion.'),
-                  ('🔄', 'Practice spotting loaded language in everything you read, watch, and share.'),
-                ].map((t) => Padding(
+          return _ExpandCard(
+            icon: '💭',
+            iconColor: AppColors.indigo,
+            title: 'Why This Matters',
+            subtitle: 'Three quick takeaways',
+            elevated: false,
+            children: [
+              ('🧠', 'Emotional words activate your brain\'s fear response before you can think critically.'),
+              ('⚖️', 'Neutral language gives you the facts — and lets you form your own opinion.'),
+              ('🔄', 'Practice spotting loaded language in everything you read, watch, and share.'),
+            ]
+                .map((t) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1000,17 +907,76 @@ class _ResultsPanel extends StatelessWidget {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(t.$2,
-                                style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.55)),
+                                style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.75), height: 1.55)),
                           ),
                         ],
                       ),
-                    )),
-              ],
-            ),
+                    ))
+                .toList(),
           );
         }),
         const SizedBox(height: 16),
       ],
+    );
+  }
+}
+
+// ── Collapsed-by-default expander card ───────────────────────────────────────
+class _ExpandCard extends StatelessWidget {
+  const _ExpandCard({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.children,
+    required this.elevated,
+  });
+  final String icon, title, subtitle;
+  final Color iconColor;
+  final List<Widget> children;
+  final bool elevated;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(elevated ? 24 : 20),
+        border: elevated ? null : Border.all(color: cs.outlineVariant),
+        boxShadow: elevated
+            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6))]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(elevated ? 24 : 20),
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: false,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+            childrenPadding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            shape: const Border(),
+            collapsedShape: const Border(),
+            iconColor: cs.onSurface.withValues(alpha: 0.7),
+            collapsedIconColor: cs.onSurface.withValues(alpha: 0.7),
+            leading: Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(child: Text(icon, style: const TextStyle(fontSize: 17))),
+            ),
+            title: Text(title, style: _m(size: 15, weight: FontWeight.w900, color: cs.onSurface)),
+            subtitle: Text(subtitle,
+                style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7)),
+                overflow: TextOverflow.ellipsis),
+            children: children,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1032,7 +998,19 @@ class _BiasMeter extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
-    final fraction = (score / 100).clamp(0.0, 1.0);
+    final target = score.clamp(0, 100).toDouble();
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: target),
+      duration: const Duration(milliseconds: 1200),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, _) {
+        final fraction = (v / 100).clamp(0.0, 1.0);
+        return _buildCard(cs, bgColor, fraction, v.round());
+      },
+    );
+  }
+
+  Widget _buildCard(ColorScheme cs, Color bgColor, double fraction, int shown) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -1049,7 +1027,7 @@ class _BiasMeter extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Bias Score', style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
+                    Text('Bias Score', style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7))),
                     const SizedBox(height: 2),
                     Text(label, style: _m(size: 18, weight: FontWeight.w900, color: _color)),
                   ],
@@ -1058,7 +1036,7 @@ class _BiasMeter extends StatelessWidget {
               Container(
                 width: 52, height: 52,
                 decoration: BoxDecoration(color: _color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Center(child: Text('$score', style: _m(size: 18, weight: FontWeight.w900, color: _color))),
+                child: Center(child: Text('$shown', style: _m(size: 18, weight: FontWeight.w900, color: _color))),
               ),
             ],
           ),
@@ -1076,8 +1054,8 @@ class _BiasMeter extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Neutral', style: _m(size: 10, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
-              Text('Manipulative', style: _m(size: 10, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+              Text('Neutral', style: _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
+              Text('Manipulative', style: _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
             ],
           ),
         ],
@@ -1144,7 +1122,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Three Perspectives', style: _m(size: 15, weight: FontWeight.w900, color: cs.onSurface)),
-                  Text('Same story — different framings', style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+                  Text('Same story — different framings', style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
                 ],
               ),
             ],
@@ -1179,7 +1157,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                         textAlign: TextAlign.center,
                         style: _m(
                           size: 12, weight: FontWeight.w800,
-                          color: selected ? Colors.white : cs.onSurface.withValues(alpha: 0.55),
+                          color: selected ? Colors.white : cs.onSurface.withValues(alpha: 0.7),
                         ),
                       ),
                     ),
@@ -1212,7 +1190,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(persp.label,
-                        style: _m(size: 10, weight: FontWeight.w800, color: color, spacing: 0.5)),
+                        style: _m(size: 11, weight: FontWeight.w800, color: color, spacing: 0.5)),
                   ),
                   const SizedBox(height: 10),
                   Text(persp.text,
@@ -1225,7 +1203,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                       const SizedBox(width: 5),
                       Expanded(
                         child: Text(persp.note,
-                            style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.4)),
+                            style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.4)),
                       ),
                     ],
                   ),
@@ -1240,7 +1218,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFFDE68A)),
+              border: Border.all(color: AppColors.amber.withValues(alpha: 0.5)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1250,7 +1228,7 @@ class _PerspectivesCardState extends State<_PerspectivesCard> {
                 Expanded(
                   child: Text(
                     'All three are factual — but the word choices shape how you feel. Neutral gives you facts; the others reveal how real outlets frame the same story.',
-                    style: _m(size: 11, weight: FontWeight.w500, color: const Color(0xFF92400E), height: 1.5),
+                    style: _m(size: 11, weight: FontWeight.w500, color: _amberText(context), height: 1.5),
                   ),
                 ),
               ],
@@ -1293,7 +1271,7 @@ class _TextCompareCard extends StatelessWidget {
               const SizedBox(width: 7),
               Text(label,
                   style: _m(
-                      size: 10,
+                      size: 11,
                       weight: FontWeight.w800,
                       color: labelColor,
                       spacing: 1.0)),
@@ -1340,7 +1318,7 @@ class _ChangeRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
-            onTap: hasGlossary ? () => _showGlossary(context) : null,
+            onTap: hasGlossary ? () { HapticFeedback.lightImpact(); _showGlossary(context); } : null,
             child: Row(
               children: [
                 Text(item.icon, style: const TextStyle(fontSize: 14)),
@@ -1360,7 +1338,7 @@ class _ChangeRow extends StatelessWidget {
                       children: [
                         const Icon(Icons.info_outline_rounded, size: 11, color: _kAccent),
                         const SizedBox(width: 3),
-                        Text('Learn', style: _m(size: 10, weight: FontWeight.w700, color: _kAccent)),
+                        Text('Learn', style: _m(size: 11, weight: FontWeight.w700, color: _kAccent)),
                       ],
                     ),
                   ),
@@ -1369,7 +1347,7 @@ class _ChangeRow extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(item.explanation, style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
+          Text(item.explanation, style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.5)),
           const SizedBox(height: 10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1377,13 +1355,13 @@ class _ChangeRow extends StatelessWidget {
               Container(
                 margin: const EdgeInsets.only(top: 2),
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: const Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(4)),
-                child: Text('Before', style: _m(size: 9, weight: FontWeight.w800, color: const Color(0xFFDC2626), spacing: 0.3)),
+                decoration: BoxDecoration(color: AppColors.red.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(4)),
+                child: Text('Before', style: _m(size: 11, weight: FontWeight.w800, color: const Color(0xFFDC2626), spacing: 0.3)),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(item.original,
-                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.5)),
+                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.5)),
               ),
             ],
           ),
@@ -1394,8 +1372,8 @@ class _ChangeRow extends StatelessWidget {
               Container(
                 margin: const EdgeInsets.only(top: 2),
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(4)),
-                child: Text('After', style: _m(size: 9, weight: FontWeight.w800, color: _kAccent, spacing: 0.3)),
+                decoration: BoxDecoration(color: AppColors.green.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(4)),
+                child: Text('After', style: _m(size: 11, weight: FontWeight.w800, color: _kAccent, spacing: 0.3)),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1445,7 +1423,7 @@ class _GlossarySheet extends StatelessWidget {
                   ? Center(child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text('No glossary entry for "$biasType" yet.',
-                          style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+                          style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
                     ))
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1527,7 +1505,7 @@ class _GlossarySection extends StatelessWidget {
               children: [
                 Text(title, style: _m(size: 12, weight: FontWeight.w800, color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 5),
-                Text(text, style: _m(size: 13, weight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55), height: 1.6)),
+                Text(text, style: _m(size: 13, weight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7), height: 1.6)),
               ],
             ),
           ),
@@ -1552,7 +1530,7 @@ class _TipCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: cs.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFFDE68A)),
+          border: Border.all(color: AppColors.amber.withValues(alpha: 0.5)),
         ),
         child: Row(
           children: [
@@ -1563,7 +1541,7 @@ class _TipCard extends StatelessWidget {
                 hasResults
                     ? 'Try editing the text above and rewriting again — see how even small word choices shift the tone and perspective.'
                     : 'You can also screenshot a biased post and use the Camera or Gallery button.',
-                style: _m(size: 12, weight: FontWeight.w600, color: const Color(0xFF92400E), height: 1.55),
+                style: _m(size: 12, weight: FontWeight.w600, color: _amberText(context), height: 1.55),
               ),
             ),
           ],
@@ -1634,7 +1612,7 @@ class _DebiasPredictionPromptState extends State<_DebiasPredictionPrompt> {
               style: _m(
                   size: 12,
                   weight: FontWeight.w500,
-                  color: cs.onSurface.withValues(alpha: 0.55),
+                  color: cs.onSurface.withValues(alpha: 0.7),
                   height: 1.4)),
           const SizedBox(height: 14),
           Row(children: [
@@ -1648,7 +1626,7 @@ class _DebiasPredictionPromptState extends State<_DebiasPredictionPrompt> {
             ),
             const SizedBox(width: 8),
             Text('/100',
-                style: _m(size: 13, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+                style: _m(size: 13, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
             const SizedBox(width: 10),
             Expanded(
               child: Text(_label(_value),
@@ -1687,10 +1665,10 @@ class _DebiasPredictionPromptState extends State<_DebiasPredictionPrompt> {
               children: [
                 Text('Neutral',
                     style:
-                        _m(size: 9, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+                        _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
                 Text('Highly Manipulative',
                     style:
-                        _m(size: 9, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+                        _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
               ],
             ),
           ),
@@ -1721,7 +1699,7 @@ class _DebiasPredictionPromptState extends State<_DebiasPredictionPrompt> {
           Center(
             child: Text('Helps track your critical-thinking growth',
                 style:
-                    _m(size: 10, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+                    _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
           ),
         ],
       ),
@@ -1900,7 +1878,7 @@ class _DebiasPredictionResultChip extends StatelessWidget {
                       color: Color(0xFF6366F1), shape: BoxShape.circle)),
               const SizedBox(width: 4),
               Text('AI: $aiScore/100',
-                  style: _m(size: 10, weight: FontWeight.w700,
+                  style: _m(size: 11, weight: FontWeight.w700,
                       color: const Color(0xFF6366F1))),
               const SizedBox(width: 12),
               Container(width: 8, height: 8,
@@ -1908,12 +1886,12 @@ class _DebiasPredictionResultChip extends StatelessWidget {
                       color: accentColor, shape: BoxShape.circle)),
               const SizedBox(width: 4),
               Text('You: $userScore/100',
-                  style: _m(size: 10, weight: FontWeight.w700,
+                  style: _m(size: 11, weight: FontWeight.w700,
                       color: accentColor)),
               const Spacer(),
               Text('$diff pts apart',
-                  style: _m(size: 10, weight: FontWeight.w600,
-                      color: cs.onSurface.withValues(alpha: 0.55))),
+                  style: _m(size: 11, weight: FontWeight.w600,
+                      color: cs.onSurface.withValues(alpha: 0.7))),
             ],
           ),
           const SizedBox(height: 6),
@@ -1925,8 +1903,8 @@ class _DebiasPredictionResultChip extends StatelessWidget {
                 size: 11,
                 weight: FontWeight.w500,
                 color: correct
-                    ? const Color(0xFF15803D)
-                    : const Color(0xFF92400E),
+                    ? _greenText(context)
+                    : _amberText(context),
                 height: 1.4),
           ),
         ],
@@ -1973,9 +1951,9 @@ class _ShimmerNeutralCardState extends State<_ShimmerNeutralCard>
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
+        color: _tint(context, AppColors.green, const Color(0xFFF0FDF4)),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFBBF7D0)),
+        border: Border.all(color: _tintBorder(context, AppColors.green, const Color(0xFFBBF7D0))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1987,12 +1965,22 @@ class _ShimmerNeutralCardState extends State<_ShimmerNeutralCard>
               Expanded(
                 child: Text('NEUTRAL REWRITE',
                     style: _m(
-                        size: 10,
+                        size: 11,
                         weight: FontWeight.w800,
                         color: _kAccent,
                         spacing: 1.0)),
               ),
-              GestureDetector(
+              GlassButton(
+                label: 'Copy',
+                icon: Icons.copy_rounded,
+                accent: _kAccent,
+                filled: false,
+                expand: false,
+                height: 34,
+                radius: 12,
+                fontSize: 12,
+                haptic: GlassHaptic.light,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: widget.text));
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2003,26 +1991,6 @@ class _ShimmerNeutralCardState extends State<_ShimmerNeutralCard>
                     ),
                   );
                 },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _kAccent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.copy_rounded,
-                          size: 12, color: _kAccent),
-                      const SizedBox(width: 4),
-                      Text('Copy',
-                          style: _m(
-                              size: 11,
-                              weight: FontWeight.w700,
-                              color: _kAccent)),
-                    ],
-                  ),
-                ),
               ),
             ],
           ),

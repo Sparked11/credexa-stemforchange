@@ -507,8 +507,7 @@ Rules:
     final candidates = hasImage
         ? const ['openai/gpt-4o', 'openai/gpt-4o-mini']
         : const [
-            'anthropic/claude-3.5-sonnet',
-            'anthropic/claude-3-5-sonnet',
+            'anthropic/claude-sonnet-4.5',
             'openai/gpt-4o',
           ];
     final timeoutSecs = hasImage ? 30 : 55;

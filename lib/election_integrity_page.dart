@@ -1,3 +1,4 @@
+import 'widgets/adaptive_chrome.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
 import 'services/profile_service.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 const _kBlue   = Color(0xFF1D4ED8);
@@ -12,12 +15,11 @@ const _kRed    = Color(0xFFDC2626);
 const _kGold   = Color(0xFFF59E0B);
 const _kGreen  = Color(0xFF22C55E);
 const _kPurple = Color(0xFF7C3AED);
-const _kPrimary = Color(0xFF1E293B);
 
 TextStyle _m({
   required double size,
   FontWeight weight = FontWeight.w600,
-  Color color = _kPrimary,
+  Color? color,
   double? height,
   double spacing = 0,
 }) =>
@@ -190,7 +192,7 @@ class _ElectionIntegrityPageState extends State<ElectionIntegrityPage> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = friendlyError(e);
       });
     }
   }
@@ -251,9 +253,13 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
         )
         .timeout(const Duration(seconds: 28));
 
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    final raw =
-        (body['choices'] as List).first['message']['content'] as String;
+    final decoded = jsonDecode(resp.body);
+    final choices = decoded is Map<String, dynamic> ? decoded['choices'] : null;
+    if (resp.statusCode != 200 || choices is! List || choices.isEmpty) {
+      throw Exception('AI service unavailable (status ${resp.statusCode}).');
+    }
+    final raw = choices.first['message']?['content'];
+    if (raw is! String) throw Exception('Invalid response from AI.');
     final start = raw.indexOf('{');
     final end = raw.lastIndexOf('}');
     if (start == -1 || end == -1) throw Exception('Invalid response from AI.');
@@ -337,23 +343,7 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
   }
 
   Widget _buildNavbar(ColorScheme cs, Color bgColor) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      height: 64,
-      decoration: BoxDecoration(
-        color: _scrolled ? cs.surface : bgColor,
-        border: _scrolled
-            ? const Border(bottom: BorderSide(color: Color(0x12000000)))
-            : null,
-        boxShadow: _scrolled
-            ? [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4))
-              ]
-            : [],
-      ),
+    return GlassTopBar.simple(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -388,7 +378,7 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
             style: _m(
                 size: 13,
                 weight: FontWeight.w500,
-                color: cs.onSurface.withValues(alpha: 0.55),
+                color: cs.onSurface.withValues(alpha: 0.7),
                 height: 1.6),
           ),
           const SizedBox(height: 22),
@@ -405,7 +395,7 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
               style: _m(
                   size: 12,
                   weight: FontWeight.w700,
-                  color: cs.onSurface.withValues(alpha: 0.50))),
+                  color: cs.onSurface.withValues(alpha: 0.7))),
           const SizedBox(height: 10),
           SizedBox(
             height: 40,
@@ -428,7 +418,14 @@ Include exactly 5 promises and 5 votes on major, real legislation. Only use veri
           // ── Main area ─────────────────────────────────────────────────
           if (_selectedName == null) _EmptyState(),
           if (_loading) _LoadingCard(name: _selectedName ?? ''),
-          if (_error != null && !_loading) _ErrorCard(message: _error!),
+          if (_error != null && !_loading)
+            AppErrorCard(
+              title: 'Couldn\'t load this record',
+              message: _error!,
+              onRetry: _selectedName == null
+                  ? null
+                  : () => _selectPolitician(_selectedName!),
+            ),
           if (_data != null && !_loading)
             _PoliticianView(
               data: _data!,
@@ -481,19 +478,24 @@ class _SearchBar extends StatelessWidget {
           hintStyle: _m(
               size: 14,
               weight: FontWeight.w500,
-              color: cs.onSurface.withValues(alpha: 0.38)),
+              color: cs.onSurface.withValues(alpha: 0.7)),
           prefixIcon: Icon(Icons.search_rounded,
-              color: cs.onSurface.withValues(alpha: 0.38), size: 22),
-          suffixIcon: GestureDetector(
-            onTap: () {
-              if (ctrl.text.trim().isNotEmpty) onSubmit(ctrl.text.trim());
-            },
-            child: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                  color: _kBlue, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.arrow_forward_rounded,
-                  color: Colors.white, size: 18),
+              color: cs.onSurface.withValues(alpha: 0.7), size: 22),
+          suffixIcon: Padding(
+            padding: const EdgeInsets.all(6),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: GlassButton(
+                icon: Icons.arrow_forward_rounded,
+                accent: _kBlue,
+                height: 44,
+                radius: 13,
+                padding: EdgeInsets.zero,
+                onTap: () {
+                  if (ctrl.text.trim().isNotEmpty) onSubmit(ctrl.text.trim());
+                },
+              ),
             ),
           ),
           filled: true,
@@ -547,7 +549,7 @@ class _FeaturedChip extends StatelessWidget {
               : [],
         ),
         child: Text(
-          politician.name.split(' ').last,
+          politician.name,
           style: _m(
             size: 12,
             weight: FontWeight.w700,
@@ -590,7 +592,7 @@ class _EmptyState extends StatelessWidget {
             style: _m(
                 size: 13,
                 weight: FontWeight.w500,
-                color: cs.onSurface.withValues(alpha: 0.50),
+                color: cs.onSurface.withValues(alpha: 0.7),
                 height: 1.6),
           ),
         ],
@@ -600,82 +602,112 @@ class _EmptyState extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  LOADING CARD
+//  LOADING SKELETON (mirrors the profile card)
 // ─────────────────────────────────────────────────────────────────────────────
-class _LoadingCard extends StatelessWidget {
+class _LoadingCard extends StatefulWidget {
   const _LoadingCard({required this.name});
   final String name;
 
   @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+  State<_LoadingCard> createState() => _LoadingCardState();
+}
+
+class _LoadingCardState extends State<_LoadingCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1100))
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Widget _box(Color base, double w, double h, {double r = 8, bool circle = false}) {
+    final t = Curves.easeInOut.transform(_c.value);
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(28),
+      width: w == double.infinity ? null : w,
+      height: h,
       decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _kBlue.withValues(alpha: 0.20)),
-      ),
-      child: Column(
-        children: [
-          const SizedBox(
-            width: 36,
-            height: 36,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
-              valueColor: AlwaysStoppedAnimation<Color>(_kBlue),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text('Loading $name\'s record…',
-              style: _m(size: 14, weight: FontWeight.w800, color: _kBlue)),
-          const SizedBox(height: 6),
-          Text(
-            'Fetching promises · Voting history · Civic profile',
-            textAlign: TextAlign.center,
-            style: _m(
-                size: 11,
-                weight: FontWeight.w500,
-                color: cs.onSurface.withValues(alpha: 0.45)),
-          ),
-        ],
+        color: base.withValues(alpha: 0.06 + 0.10 * t),
+        borderRadius: circle ? null : BorderRadius.circular(r),
+        shape: circle ? BoxShape.circle : BoxShape.rectangle,
       ),
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  ERROR CARD
-// ─────────────────────────────────────────────────────────────────────────────
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
-  final String message;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kRed.withValues(alpha: 0.50)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('⚠', style: TextStyle(fontSize: 16)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Text(message,
-                  style: _m(
-                      size: 12,
-                      weight: FontWeight.w600,
-                      color: _kRed,
-                      height: 1.5))),
-        ],
-      ),
+    final base = cs.onSurface;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedBuilder(
+          animation: _c,
+          builder: (_, _) => Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: _kBlue.withValues(alpha: 0.20)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _box(base, 64, 64, circle: true),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _box(base, 150, 16),
+                          const SizedBox(height: 9),
+                          _box(base, 110, 12),
+                          const SizedBox(height: 10),
+                          Row(children: [
+                            _box(base, 72, 20, r: 100),
+                            const SizedBox(width: 8),
+                            _box(base, 56, 12),
+                          ]),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _box(base, double.infinity, 56, r: 14),
+                const SizedBox(height: 16),
+                _box(base, double.infinity, 14, r: 7),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Center(
+          child: Text('Loading ${widget.name}\'s record…',
+              style: _m(size: 13, weight: FontWeight.w800, color: _kBlue)),
+        ),
+        const SizedBox(height: 4),
+        Center(
+          child: Text('Fetching promises · Voting history · Civic profile',
+              textAlign: TextAlign.center,
+              style: _m(
+                  size: 11,
+                  weight: FontWeight.w500,
+                  color: cs.onSurface.withValues(alpha: 0.7))),
+        ),
+      ],
     );
   }
 }
@@ -699,6 +731,8 @@ class _PoliticianView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _ProfileCard(data: data),
+        const SizedBox(height: 12),
+        const _AiNote(),
         const SizedBox(height: 16),
         _TabSelector(activeTab: activeTab, onTabChanged: onTabChanged),
         const SizedBox(height: 16),
@@ -788,7 +822,7 @@ class _ProfileCard extends StatelessWidget {
                         style: _m(
                             size: 12,
                             weight: FontWeight.w600,
-                            color: cs.onSurface.withValues(alpha: 0.50))),
+                            color: cs.onSurface.withValues(alpha: 0.7))),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -801,14 +835,14 @@ class _ProfileCard extends StatelessWidget {
                               Icon(Icons.location_on_rounded,
                                   size: 11,
                                   color:
-                                      cs.onSurface.withValues(alpha: 0.35)),
+                                      cs.onSurface.withValues(alpha: 0.7)),
                               const SizedBox(width: 3),
                               Text(data.state,
                                   style: _m(
                                       size: 11,
                                       weight: FontWeight.w600,
                                       color: cs.onSurface
-                                          .withValues(alpha: 0.40))),
+                                          .withValues(alpha: 0.7))),
                             ],
                           ),
                         ],
@@ -856,7 +890,7 @@ class _PartyBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text(label,
-          style: _m(size: 10, weight: FontWeight.w800, color: color)),
+          style: _m(size: 11, weight: FontWeight.w800, color: color)),
     );
   }
 }
@@ -939,7 +973,7 @@ class _TabItem extends StatelessWidget {
               weight: FontWeight.w800,
               color: active
                   ? Colors.white
-                  : cs.onSurface.withValues(alpha: 0.50),
+                  : cs.onSurface.withValues(alpha: 0.7),
             ),
           ),
         ),
@@ -967,21 +1001,7 @@ class _PromiseTracker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Stats row
-        Row(
-          children: [
-            Expanded(
-                child: _StatPill(value: '$kept', label: 'Kept', color: _kGreen)),
-            const SizedBox(width: 8),
-            Expanded(
-                child: _StatPill(
-                    value: '$progress', label: 'In Progress', color: _kGold)),
-            const SizedBox(width: 8),
-            Expanded(
-                child: _StatPill(
-                    value: '$broken', label: 'Broken', color: _kRed)),
-          ],
-        ),
+        _PromiseBar(kept: kept, progress: progress, broken: broken),
         const SizedBox(height: 16),
 
         ...data.promises
@@ -994,32 +1014,129 @@ class _PromiseTracker extends StatelessWidget {
   }
 }
 
-class _StatPill extends StatelessWidget {
-  const _StatPill(
-      {required this.value, required this.label, required this.color});
-  final String value, label;
-  final Color color;
+class _AiNote extends StatelessWidget {
+  const _AiNote();
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.28)),
+        color: _kGold.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kGold.withValues(alpha: 0.40)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 16, color: _kGold),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('AI-generated summary. Verify with official sources.',
+                style: _m(
+                    size: 12,
+                    weight: FontWeight.w700,
+                    color: cs.onSurface.withValues(alpha: 0.85),
+                    height: 1.4)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PromiseBar extends StatelessWidget {
+  const _PromiseBar(
+      {required this.kept, required this.progress, required this.broken});
+  final int kept, progress, broken;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final total = kept + progress + broken;
+    if (total == 0) return const SizedBox.shrink();
+    final items = [
+      ('Kept', kept, _kGreen),
+      ('In Progress', progress, _kGold),
+      ('Broken', broken, _kRed),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value,
-              style:
-                  _m(size: 24, weight: FontWeight.w900, color: color)),
-          const SizedBox(height: 3),
-          Text(label,
-              style: _m(
-                  size: 10,
-                  weight: FontWeight.w700,
-                  color: color.withValues(alpha: 0.80))),
+          Text('Promise scorecard',
+              style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
+          const SizedBox(height: 12),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 900),
+            curve: Curves.easeOutCubic,
+            builder: (_, t, _) => ClipRRect(
+              borderRadius: BorderRadius.circular(100),
+              child: Container(
+                height: 14,
+                color: cs.outlineVariant.withValues(alpha: 0.5),
+                child: LayoutBuilder(builder: (_, box) {
+                  return Row(
+                    children: [
+                      for (final it in items)
+                        if (it.$2 > 0)
+                          Container(
+                            width: box.maxWidth * (it.$2 / total) * t,
+                            color: it.$3,
+                          ),
+                    ],
+                  );
+                }),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              for (final it in items)
+                Expanded(
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration:
+                            BoxDecoration(color: it.$3, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text.rich(
+                          TextSpan(children: [
+                            TextSpan(
+                                text: '${it.$2} ',
+                                style: _m(
+                                    size: 14,
+                                    weight: FontWeight.w900,
+                                    color: cs.onSurface)),
+                            TextSpan(
+                                text: it.$1,
+                                style: _m(
+                                    size: 11,
+                                    weight: FontWeight.w600,
+                                    color: cs.onSurface.withValues(alpha: 0.75))),
+                          ]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -1085,11 +1202,11 @@ class _PromiseCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(statusIcon,
-                        style: const TextStyle(fontSize: 10)),
+                        style: const TextStyle(fontSize: 11)),
                     const SizedBox(width: 4),
                     Text(statusLabel,
                         style: _m(
-                            size: 9,
+                            size: 11,
                             weight: FontWeight.w800,
                             color: statusColor)),
                   ],
@@ -1102,7 +1219,7 @@ class _PromiseCard extends StatelessWidget {
               style: _m(
                   size: 12,
                   weight: FontWeight.w500,
-                  color: cs.onSurface.withValues(alpha: 0.62),
+                  color: cs.onSurface.withValues(alpha: 0.7),
                   height: 1.55)),
           const SizedBox(height: 12),
           Row(
@@ -1113,9 +1230,9 @@ class _PromiseCard extends StatelessWidget {
               if (promise.date.isNotEmpty)
                 Text(promise.date,
                     style: _m(
-                        size: 10,
+                        size: 11,
                         weight: FontWeight.w600,
-                        color: cs.onSurface.withValues(alpha: 0.35))),
+                        color: cs.onSurface.withValues(alpha: 0.7))),
             ],
           ),
           if (promise.evidence.isNotEmpty) ...[
@@ -1217,7 +1334,7 @@ class _VoteCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(record.billNumber,
                           style: _m(
-                              size: 10,
+                              size: 11,
                               weight: FontWeight.w700,
                               color: _kBlue.withValues(alpha: 0.80))),
                     ],
@@ -1227,7 +1344,7 @@ class _VoteCard extends StatelessWidget {
               const SizedBox(width: 12),
               // Vote badge
               Container(
-                width: 58,
+                width: 66,
                 height: 58,
                 decoration: BoxDecoration(
                   color: voteColor.withValues(alpha: 0.10),
@@ -1243,7 +1360,7 @@ class _VoteCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(voteLabel,
                         style: _m(
-                            size: 8,
+                            size: 11,
                             weight: FontWeight.w900,
                             color: voteColor)),
                   ],
@@ -1256,7 +1373,7 @@ class _VoteCard extends StatelessWidget {
               style: _m(
                   size: 12,
                   weight: FontWeight.w500,
-                  color: cs.onSurface.withValues(alpha: 0.62),
+                  color: cs.onSurface.withValues(alpha: 0.7),
                   height: 1.55)),
           const SizedBox(height: 10),
           Row(
@@ -1267,9 +1384,9 @@ class _VoteCard extends StatelessWidget {
               if (record.date.isNotEmpty)
                 Text(record.date,
                     style: _m(
-                        size: 10,
+                        size: 11,
                         weight: FontWeight.w600,
-                        color: cs.onSurface.withValues(alpha: 0.35))),
+                        color: cs.onSurface.withValues(alpha: 0.7))),
             ],
           ),
         ],
@@ -1298,13 +1415,13 @@ class _CategoryChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.label_outline_rounded,
-              size: 10, color: cs.onSurface.withValues(alpha: 0.40)),
+              size: 10, color: cs.onSurface.withValues(alpha: 0.7)),
           const SizedBox(width: 4),
           Text(label,
               style: _m(
-                  size: 10,
+                  size: 11,
                   weight: FontWeight.w700,
-                  color: cs.onSurface.withValues(alpha: 0.45))),
+                  color: cs.onSurface.withValues(alpha: 0.7))),
         ],
       ),
     );
@@ -1326,7 +1443,7 @@ class _EyebrowChip extends StatelessWidget {
       ),
       child: Text(label,
           style:
-              _m(size: 10, weight: FontWeight.w800, color: color, spacing: 1.1)),
+              _m(size: 11, weight: FontWeight.w800, color: color, spacing: 1.1)),
     );
   }
 }

@@ -11,6 +11,12 @@ import 'auth_service.dart';
 import 'legal_page.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/adaptive_chrome.dart';
+import 'widgets/badge_collection.dart';
+import 'widgets/glass_button.dart';
+import 'widgets/maturity_levels_sheet.dart';
 
 // ── Banner themes ─────────────────────────────────────────────────────────────
 
@@ -25,14 +31,31 @@ class _BannerOption {
 
 final _kBannerOptions = <_BannerOption>[
   _BannerOption(id: 0, label: 'Default'),
-  _BannerOption(id: 1, label: 'Mountains',    photoUrl: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 2, label: 'Aurora',       photoUrl: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 3, label: 'Beach',        photoUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 4, label: 'Forest',       photoUrl: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 5, label: 'Blossoms',     photoUrl: 'https://images.unsplash.com/photo-1502082553048-f009c37129b9?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 6, label: 'Starry Night', photoUrl: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=800&q=70'),
-  _BannerOption(id: 7, label: 'Coastal Glow', photoUrl: 'https://images.unsplash.com/photo-1470770903676-69b98201ea1c?auto=format&fit=crop&w=800&q=70'),
+  _BannerOption(id: 1, label: 'Mountains',    photoUrl: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF334155), Color(0xFF0F766E)]),
+  _BannerOption(id: 2, label: 'Aurora',       photoUrl: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF0F172A), Color(0xFF047857)]),
+  _BannerOption(id: 3, label: 'Beach',        photoUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF0369A1), Color(0xFF0EA5E9)]),
+  _BannerOption(id: 4, label: 'Forest',       photoUrl: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF14532D), Color(0xFF166534)]),
+  _BannerOption(id: 5, label: 'Blossoms',     photoUrl: 'https://images.unsplash.com/photo-1502082553048-f009c37129b9?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF9D174D), Color(0xFFDB2777)]),
+  _BannerOption(id: 6, label: 'Starry Night', photoUrl: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFF1E1B4B), Color(0xFF4338CA)]),
+  _BannerOption(id: 7, label: 'Coastal Glow', photoUrl: 'https://images.unsplash.com/photo-1470770903676-69b98201ea1c?auto=format&fit=crop&w=800&q=70', gradient: const [Color(0xFFB45309), Color(0xFFDB2777)]),
 ];
+
+int _levelNumber(MaturityLevel l) {
+  final i = kMaturityLevels.indexWhere((x) => x.title == l.title);
+  return i < 0 ? 1 : i + 1;
+}
+
+IconData _levelIcon(MaturityLevel l) {
+  const icons = [
+    Icons.eco_rounded,
+    Icons.search_rounded,
+    Icons.gps_fixed_rounded,
+    Icons.psychology_rounded,
+    Icons.balance_rounded,
+    Icons.emoji_events_rounded,
+  ];
+  return icons[(_levelNumber(l) - 1).clamp(0, icons.length - 1)];
+}
 
 // ── Typography helper ─────────────────────────────────────────────────────────
 TextStyle _mp({
@@ -62,6 +85,13 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   bool _uploadingPhoto = false;
+  final ChromeController _chrome = ChromeController();
+
+  @override
+  void dispose() {
+    _chrome.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -72,6 +102,7 @@ class _ProfilePageState extends State<ProfilePage> {
   // ── Photo change ─────────────────────────────────────────────────────────────
 
   Future<void> _changePhoto() async {
+    HapticFeedback.lightImpact();
     final picker = ImagePicker();
     final picked = await picker.pickImage(
       source:       ImageSource.gallery,
@@ -145,7 +176,18 @@ class _ProfilePageState extends State<ProfilePage> {
         fb.FirebaseAuth.instance.currentUser?.metadata.creationTime;
     final joinDateStr = joinedAt != null ? _formatDate(joinedAt) : '—';
 
-    return Scaffold(
+    return ChromeScope(
+      controller: _chrome,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          if (n.metrics.axis == Axis.vertical &&
+              n.depth == 0 &&
+              n is ScrollUpdateNotification) {
+            _chrome.onScroll(n.metrics.pixels, n.scrollDelta ?? 0);
+          }
+          return false;
+        },
+        child: Scaffold(
       backgroundColor: bgColor,
       body: ValueListenableBuilder<ProfileData>(
         valueListenable: ProfileService.data,
@@ -153,7 +195,7 @@ class _ProfilePageState extends State<ProfilePage> {
           return CustomScrollView(
             slivers: [
               SliverAppBar(
-                expandedHeight:  260,
+                expandedHeight:  330,
                 pinned:          true,
                 backgroundColor: const Color(0xFF1E293B),
                 surfaceTintColor: Colors.transparent,
@@ -163,7 +205,10 @@ class _ProfilePageState extends State<ProfilePage> {
                     color: Colors.white,
                     size:  20,
                   ),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    Navigator.of(context).pop();
+                  },
                 ),
                 title: const Text(
                   'Profile',
@@ -180,14 +225,26 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
               ),
               SliverToBoxAdapter(
-                  child: _buildStats(context, data.checks, data.debiases, data.posts)),
-              SliverToBoxAdapter(child: const _ProgressReportSection()),
+                  child: ScrollReveal(
+                      child: _buildStats(
+                          context, data.checks, data.debiases, data.posts))),
               SliverToBoxAdapter(
-                  child: _buildBadges(
-                      context, data.checks, data.debiases, data.posts, data.quests)),
+                  child: ScrollReveal(child: const _ProgressReportSection())),
               SliverToBoxAdapter(
-                  child: _buildAccount(context, user, joinDateStr)),
-              SliverToBoxAdapter(child: _buildSignOut(context)),
+                  child: ScrollReveal(child: _buildMaturityStrip(context))),
+              SliverToBoxAdapter(
+                child: BadgeCollection(
+                  checks: data.checks,
+                  debiases: data.debiases,
+                  posts: data.posts,
+                  quests: data.quests,
+                ),
+              ),
+              SliverToBoxAdapter(
+                  child: ScrollReveal(
+                      child: _buildAccount(context, user, joinDateStr))),
+              SliverToBoxAdapter(
+                  child: ScrollReveal(child: _buildSignOut(context))),
               SliverToBoxAdapter(child: _buildDeleteAccount(context)),
               SliverToBoxAdapter(child: _buildLegalLink(context)),
               const SliverToBoxAdapter(child: SizedBox(height: 48)),
@@ -195,6 +252,152 @@ class _ProfilePageState extends State<ProfilePage> {
           );
         },
       ),
+    ),
+      ),
+    );
+  }
+
+  // ── Media Maturity ladder preview ────────────────────────────────────────────
+
+  static const _ladderColors = <Color>[
+    Color(0xFF94A3B8),
+    Color(0xFF0EA5E9),
+    Color(0xFF22C55E),
+    Color(0xFF6366F1),
+    Color(0xFFF59E0B),
+    Color(0xFFEF4444),
+  ];
+
+  Widget _buildMaturityStrip(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      child: ValueListenableBuilder<UserProgressStats>(
+        valueListenable: UserProgressService.stats,
+        builder: (context, stats, _) {
+          final idx = kMaturityLevels.indexOf(stats.level);
+          return Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                    ? [const Color(0xFF243247), cs.surface]
+                    : [Colors.white, const Color(0xFFF1F5F9)],
+              ),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: isDark ? 0.07 : 0.9)),
+              boxShadow: [
+                BoxShadow(
+                  color: _ladderColors[idx].withValues(alpha: 0.18),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Media Maturity',
+                          style: _mp(
+                              size: 15,
+                              weight: FontWeight.w900,
+                              color: cs.onSurface)),
+                    ),
+                    Text('Level ${idx + 1} of ${kMaturityLevels.length}',
+                        style: _mp(
+                            size: 11,
+                            weight: FontWeight.w800,
+                            color: _ladderColors[idx])),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Your level grows as you fact-check, predict and complete quests.',
+                  style: _mp(
+                      size: 12,
+                      weight: FontWeight.w500,
+                      color: cs.onSurface.withValues(alpha: 0.72)),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    for (var i = 0; i < kMaturityLevels.length; i++) ...[
+                      _ladderNode(context, i, idx),
+                      if (i < kMaturityLevels.length - 1)
+                        Expanded(
+                          child: Container(
+                            height: 3,
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(2),
+                              color: i < idx
+                                  ? _ladderColors[i]
+                                  : cs.onSurface.withValues(alpha: 0.12),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                GlassButton(
+                  label: 'Learn about all levels',
+                  icon: Icons.info_outline_rounded,
+                  accent: _ladderColors[idx],
+                  filled: false,
+                  height: 46,
+                  radius: 14,
+                  haptic: GlassHaptic.light,
+                  onTap: () => showMaturityLevels(context),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _ladderNode(BuildContext context, int i, int current) {
+    final cs = Theme.of(context).colorScheme;
+    final reached = i <= current;
+    final isCurrent = i == current;
+    final color = _ladderColors[i];
+    return Container(
+      width: isCurrent ? 42 : 34,
+      height: isCurrent ? 42 : 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: reached
+            ? LinearGradient(colors: [
+                color,
+                Color.lerp(color, Colors.black, 0.3)!,
+              ])
+            : null,
+        color: reached ? null : cs.onSurface.withValues(alpha: 0.08),
+        boxShadow: isCurrent
+            ? [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.55),
+                  blurRadius: 14,
+                  spreadRadius: 2,
+                ),
+              ]
+            : null,
+      ),
+      child: reached
+          ? Text(kMaturityLevels[i].emoji,
+              style: TextStyle(fontSize: isCurrent ? 20 : 16))
+          : Icon(Icons.lock_rounded,
+              size: 14, color: cs.onSurface.withValues(alpha: 0.4)),
     );
   }
 
@@ -214,6 +417,8 @@ class _ProfilePageState extends State<ProfilePage> {
           Image.network(
             theme.photoUrl!,
             fit: BoxFit.cover,
+            loadingBuilder: (context, child, progress) =>
+                progress == null ? child : _gradientBox(theme.gradient),
             errorBuilder: (context, e, s) => _gradientBox(theme.gradient),
           )
         else
@@ -308,10 +513,12 @@ class _ProfilePageState extends State<ProfilePage> {
                 fontFamily: 'Montserrat',
                 fontSize:   12,
                 fontWeight: FontWeight.w500,
-                color:      Colors.white.withValues(alpha: 0.7),
+                color:      Colors.white.withValues(alpha: 0.85),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
+            _buildLevelHeadline(),
+            const SizedBox(height: 18),
           ],
         ),
 
@@ -332,12 +539,12 @@ class _ProfilePageState extends State<ProfilePage> {
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.wallpaper_rounded, color: Colors.white, size: 12),
+                  Icon(Icons.wallpaper_rounded, color: Colors.white, size: 14),
                   SizedBox(width: 4),
                   Text('Edit Banner',
                       style: TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize:   9,
+                        fontSize:   11,
                         fontWeight: FontWeight.w700,
                         color:      Colors.white,
                       )),
@@ -347,6 +554,100 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildLevelHeadline() {
+    return ValueListenableBuilder<UserProgressStats>(
+      valueListenable: UserProgressService.stats,
+      builder: (context, stats, _) {
+        final lvl = stats.level;
+        final toNext = lvl.pointsToNext(stats.maturityPoints);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => showMaturityLevels(context),
+          child: Container(
+          width: 250,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  IconBadge(
+                      icon: _levelIcon(lvl),
+                      color: const Color(0xFF4ADE80),
+                      size: 30),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('LEVEL ${_levelNumber(lvl)}',
+                            style: const TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.0,
+                              color: Color(0xFF4ADE80),
+                            )),
+                        Text(lvl.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            )),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(100),
+                child: LinearProgressIndicator(
+                  value: lvl.progress(stats.maturityPoints),
+                  minHeight: 6,
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFF4ADE80)),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                lvl.nextLevelPoints == -1
+                    ? '${stats.maturityPoints} pts · Max level'
+                    : '${stats.maturityPoints} pts · $toNext to next level',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Tap to see all levels',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF4ADE80).withValues(alpha: 0.95),
+                ),
+              ),
+            ],
+          ),
+          ),
+        );
+      },
     );
   }
 
@@ -379,17 +680,17 @@ class _ProfilePageState extends State<ProfilePage> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       child: Row(
         children: [
-          _statCard(context, '🔍', checks,   'Fact Checks'),
+          _statCard(context, Icons.fact_check_rounded, AppColors.sky, checks,   'Fact Checks'),
           const SizedBox(width: 12),
-          _statCard(context, '🌿', debiases, 'De-Biases'),
+          _statCard(context, Icons.spa_rounded, AppColors.green, debiases, 'De-Biases'),
           const SizedBox(width: 12),
-          _statCard(context, '💬', posts,    'Posts'),
+          _statCard(context, Icons.forum_rounded, AppColors.indigo, posts,    'Posts'),
         ],
       ),
     );
   }
 
-  Widget _statCard(BuildContext context, String icon, int count, String label) {
+  Widget _statCard(BuildContext context, IconData icon, Color color, int count, String label) {
     final cs = Theme.of(context).colorScheme;
     return Expanded(
       child: Container(
@@ -407,7 +708,7 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         child: Column(
           children: [
-            Text(icon, style: const TextStyle(fontSize: 22)),
+            IconBadge(icon: icon, color: color, size: 38),
             const SizedBox(height: 6),
             Text(
               '$count',
@@ -421,8 +722,8 @@ class _ProfilePageState extends State<ProfilePage> {
             const SizedBox(height: 2),
             Text(
               label,
-              style: _mp(size: 10, weight: FontWeight.w600,
-                  color: cs.onSurface.withValues(alpha: 0.55)),
+              style: _mp(size: 11, weight: FontWeight.w600,
+                  color: cs.onSurface.withValues(alpha: 0.7)),
               textAlign: TextAlign.center,
             ),
           ],
@@ -432,74 +733,6 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // ── Badges ───────────────────────────────────────────────────────────────────
-
-  Widget _buildBadges(BuildContext context, int checks, int debiases, int posts, int quests) {
-    final cs = Theme.of(context).colorScheme;
-    final earned =
-        kBadges.where((b) => b.isEarned(checks, debiases, posts, quests)).length;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-      child: Container(
-        padding:     const EdgeInsets.all(18),
-        decoration:  BoxDecoration(
-          color:        cs.surface,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color:      Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset:     const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text('Badges',
-                    style: _mp(size: 15, weight: FontWeight.w900,
-                        color: cs.onSurface)),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color:        cs.surface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: cs.outlineVariant),
-                  ),
-                  child: Text(
-                    '$earned / ${kBadges.length} earned',
-                    style: _mp(
-                      size:   11,
-                      weight: FontWeight.w700,
-                      color:  const Color(0xFF1D4ED8),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            GridView.count(
-              shrinkWrap:        true,
-              physics:           const NeverScrollableScrollPhysics(),
-              crossAxisCount:    3,
-              crossAxisSpacing:  10,
-              mainAxisSpacing:   10,
-              // Extra vertical room prevents the 1.7px bottom overflow.
-              childAspectRatio:  0.78,
-              children: kBadges.map((badge) {
-                final isEarned =
-                    badge.isEarned(checks, debiases, posts, quests);
-                return _BadgeTile(badge: badge, earned: isEarned);
-              }).toList(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   // ── Account ──────────────────────────────────────────────────────────────────
 
@@ -561,7 +794,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, size: 18,
-                    color: cs.onSurface.withValues(alpha: 0.55)),
+                    color: cs.onSurface.withValues(alpha: 0.7)),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -570,9 +803,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   children: [
                     Text(label,
                         style: _mp(
-                          size:   10,
+                          size:   11,
                           weight: FontWeight.w700,
-                          color:  cs.onSurface.withValues(alpha: 0.45),
+                          color:  cs.onSurface.withValues(alpha: 0.7),
                         )),
                     const SizedBox(height: 2),
                     Text(value,
@@ -598,45 +831,23 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildSignOut(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-      child: GestureDetector(
+      child: GlassButton(
+        label: 'Sign Out',
+        icon: Icons.logout_rounded,
+        accent: AppColors.red,
+        filled: false,
+        height: 54,
         onTap: () {
-          HapticFeedback.mediumImpact();
           Navigator.of(context).pop();
           AuthService.signOut();
         },
-        child: Container(
-          width:   double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          decoration: BoxDecoration(
-            color:        const Color(0xFFFFF5F5),
-            borderRadius: BorderRadius.circular(16),
-            border:       Border.all(color: const Color(0xFFFECACA)),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.logout_rounded, size: 18,
-                  color: Color(0xFFEF4444)),
-              SizedBox(width: 8),
-              Text(
-                'Sign Out',
-                style: TextStyle(
-                  fontFamily:  'Montserrat',
-                  fontSize:    14,
-                  fontWeight:  FontWeight.w700,
-                  color:       Color(0xFFEF4444),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 
   // ── Terms of Service & Privacy Policy ────────────────────────────────────────
   Widget _buildLegalLink(BuildContext context) {
-    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55);
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: GestureDetector(
@@ -711,11 +922,11 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () { HapticFeedback.lightImpact(); Navigator.pop(ctx, false); },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () { HapticFeedback.mediumImpact(); Navigator.pop(ctx, true); },
             child: const Text('Delete',
                 style: TextStyle(
                     color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
@@ -767,11 +978,11 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () { HapticFeedback.lightImpact(); Navigator.pop(ctx); },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            onPressed: () { HapticFeedback.mediumImpact(); Navigator.pop(ctx, ctrl.text); },
             child: const Text('Confirm'),
           ),
         ],
@@ -805,157 +1016,6 @@ class _ProfilePageState extends State<ProfilePage> {
 //  BADGE TILE
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _BadgeTile extends StatelessWidget {
-  const _BadgeTile({required this.badge, required this.earned});
-  final BadgeInfo badge;
-  final bool earned;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onLongPress: () => _showDetail(context),
-      child: AnimatedContainer(
-        duration:    const Duration(milliseconds: 300),
-        padding:     const EdgeInsets.all(10),
-        decoration:  BoxDecoration(
-          color:        earned
-              ? const Color(0xFFEFFDF4)
-              : cs.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: earned
-                ? const Color(0xFF22C55E)
-                : cs.outlineVariant,
-            width: earned ? 1.5 : 1,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Opacity(
-              opacity: earned ? 1.0 : 0.25,
-              child: Text(badge.emoji,
-                  style: const TextStyle(fontSize: 26)),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              badge.title,
-              style: TextStyle(
-                fontFamily:  'Montserrat',
-                fontSize:    9,
-                fontWeight:  FontWeight.w800,
-                color: earned
-                    ? cs.onSurface
-                    : cs.onSurface.withValues(alpha: 0.55),
-              ),
-              textAlign: TextAlign.center,
-              maxLines:  2,
-              overflow:  TextOverflow.ellipsis,
-            ),
-            if (!earned) ...[
-              const SizedBox(height: 3),
-              Text(
-                badge.requirement,
-                style: TextStyle(
-                  fontFamily:  'Montserrat',
-                  fontSize:    7.5,
-                  fontWeight:  FontWeight.w500,
-                  color:       cs.onSurface.withValues(alpha: 0.55),
-                ),
-                textAlign: TextAlign.center,
-                maxLines:  2,
-                overflow:  TextOverflow.ellipsis,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showDetail(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape:          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
-        backgroundColor: cs.surface,
-        contentPadding: const EdgeInsets.all(24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Opacity(
-              opacity: earned ? 1.0 : 0.35,
-              child: Text(badge.emoji,
-                  style: const TextStyle(fontSize: 48)),
-            ),
-            const SizedBox(height: 12),
-            Text(badge.title,
-                style: TextStyle(
-                  fontFamily:  'Montserrat',
-                  fontSize:    17,
-                  fontWeight:  FontWeight.w900,
-                  color:       cs.onSurface,
-                )),
-            const SizedBox(height: 6),
-            Text(badge.desc,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily:  'Montserrat',
-                  fontSize:    13,
-                  fontWeight:  FontWeight.w500,
-                  color:       cs.onSurface.withValues(alpha: 0.55),
-                )),
-            const SizedBox(height: 12),
-            if (!earned)
-              Container(
-                padding:    const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color:        const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(20),
-                  border:       Border.all(
-                      color: const Color(0xFFFED7AA)),
-                ),
-                child: Text(
-                  'Requires: ${badge.requirement}',
-                  style: const TextStyle(
-                    fontFamily:  'Montserrat',
-                    fontSize:    11,
-                    fontWeight:  FontWeight.w700,
-                    color:       Color(0xFFEA580C),
-                  ),
-                ),
-              )
-            else
-              Container(
-                padding:    const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color:        const Color(0xFFEFFDF4),
-                  borderRadius: BorderRadius.circular(20),
-                  border:       Border.all(
-                      color: const Color(0xFF86EFAC)),
-                ),
-                child: const Text(
-                  '✓ Earned',
-                  style: TextStyle(
-                    fontFamily:  'Montserrat',
-                    fontSize:    11,
-                    fontWeight:  FontWeight.w700,
-                    color:       Color(0xFF16A34A),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  SURVEY SUMMARY SECTION
 // ─────────────────────────────────────────────────────────────────────────────
@@ -987,6 +1047,7 @@ class _ProgressReportSectionState extends State<_ProgressReportSection> {
   String get _quote => _quotes[DateTime.now().weekday % _quotes.length];
 
   Future<void> _shareReport() async {
+    HapticFeedback.mediumImpact();
     setState(() => _sharing = true);
     final messenger   = ScaffoldMessenger.of(context);
     final screenSize  = MediaQuery.of(context).size;
@@ -1274,55 +1335,13 @@ class _ProgressReportSectionState extends State<_ProgressReportSection> {
             ),
             const SizedBox(height: 12),
             // ── Share button ──
-            GestureDetector(
+            KeyedSubtree(
               key: _shareButtonKey,
-              onTap: _sharing ? null : _shareReport,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                decoration: BoxDecoration(
-                  color: _sharing
-                      ? const Color(0xFF64748B)
-                      : const Color(0xFF1E293B),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: _sharing
-                      ? []
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.18),
-                            blurRadius: 14,
-                            offset: const Offset(0, 5),
-                          )
-                        ],
-                ),
-                child: _sharing
-                    ? const Center(
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white)),
-                        ),
-                      )
-                    : const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.ios_share_rounded,
-                              color: Colors.white, size: 18),
-                          SizedBox(width: 8),
-                          Text(
-                            'Share My Report',
-                            style: TextStyle(
-                              fontFamily: 'Montserrat',
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
+              child: GlassButton(
+                label: 'Share My Report',
+                icon: Icons.ios_share_rounded,
+                loading: _sharing,
+                onTap: _shareReport,
               ),
             ),
           ],
@@ -1386,7 +1405,7 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
                   child: const Text('CREDEXA · MEDIA LITERACY',
                       style: TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize: 8,
+                        fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF22C55E),
                         letterSpacing: 1.0,
@@ -1401,7 +1420,8 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
                       color: Color(0xFF4ADE80), size: 20),
                 ),
                 const SizedBox(width: 6),
-                const Text('🕊️', style: TextStyle(fontSize: 20)),
+                const Icon(Icons.balance_rounded,
+                    color: Color(0xFF4ADE80), size: 22),
               ],
             ),
           ),
@@ -1419,8 +1439,10 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
                       // ── Level ──
                       Row(
                         children: [
-                          Text(lvl.emoji,
-                              style: const TextStyle(fontSize: 36)),
+                          IconBadge(
+                              icon: _levelIcon(lvl),
+                              color: const Color(0xFF4ADE80),
+                              size: 48),
                           const SizedBox(width: 14),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1428,7 +1450,7 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
                               const Text('MEDIA MATURITY LEVEL',
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
-                                    fontSize: 8,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                     color: Color(0xFF4ADE80),
                                     letterSpacing: 1.1,
@@ -1469,13 +1491,13 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
                         ),
                         child: Row(
                           children: [
-                            _rStat('🔍', '${stats.predictionsTotal}', 'Checks'),
+                            _rStat(Icons.fact_check_rounded, '${stats.predictionsTotal}', 'Checks'),
                             _rDivider(),
-                            _rStat('🎯', pct, 'Accuracy'),
+                            _rStat(Icons.gps_fixed_rounded, pct, 'Accuracy'),
                             _rDivider(),
-                            _rStat('📚', '${stats.questsAnswered}', 'Quests'),
+                            _rStat(Icons.explore_rounded, '${stats.questsAnswered}', 'Quests'),
                             _rDivider(),
-                            _rStat('⭐', '${stats.maturityPoints}', 'Points'),
+                            _rStat(Icons.star_rounded, '${stats.maturityPoints}', 'Points'),
                           ],
                         ),
                       ),
@@ -1511,12 +1533,12 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
 
                       // ── Footer ──
                       const Text(
-                        'Generated by Credexa · UN SDG Goal 16  🕊️',
+                        'Generated by Credexa · UN SDG Goal 16',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
-                          fontSize: 9,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF475569),
+                          color: Color(0xFF94A3B8),
                           letterSpacing: 0.5,
                         ),
                       ),
@@ -1529,11 +1551,10 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
     );
   }
 
-  Widget _rStat(String emoji, String value, String label) => Expanded(
+  Widget _rStat(IconData icon, String value, String label) => Expanded(
         child: Column(
           children: [
-            Text(emoji,
-                style: const TextStyle(fontSize: 16)),
+            Icon(icon, size: 18, color: const Color(0xFF4ADE80)),
             const SizedBox(height: 3),
             Text(value,
                 style: const TextStyle(
@@ -1545,9 +1566,9 @@ class _ProgressReportCardState extends State<_ProgressReportCard> {
             Text(label,
                 style: const TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 8,
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF64748B),
+                  color: Color(0xFF94A3B8),
                 )),
           ],
         ),
@@ -1579,6 +1600,16 @@ class _BannerPickerSheetState extends State<_BannerPickerSheet> {
     super.initState();
     _selected = widget.currentId;
   }
+
+  Widget _thumbGradient(List<Color> colors) => Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: colors,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -1618,7 +1649,7 @@ class _BannerPickerSheetState extends State<_BannerPickerSheet> {
                 fontFamily: 'Montserrat',
                 fontSize:   12,
                 fontWeight: FontWeight.w500,
-                color:      Colors.white.withValues(alpha: 0.5),
+                color:      Colors.white.withValues(alpha: 0.75),
               )),
           const SizedBox(height: 16),
 
@@ -1630,7 +1661,7 @@ class _BannerPickerSheetState extends State<_BannerPickerSheet> {
               crossAxisCount:   4,
               crossAxisSpacing: 10,
               mainAxisSpacing:  10,
-              childAspectRatio: 1.6,
+              childAspectRatio: 1.35,
             ),
             itemCount: _kBannerOptions.length,
             itemBuilder: (_, i) {
@@ -1661,8 +1692,12 @@ class _BannerPickerSheetState extends State<_BannerPickerSheet> {
                         if (opt.photoUrl != null)
                           Image.network(opt.photoUrl!,
                               fit: BoxFit.cover,
+                              loadingBuilder: (context, child, progress) =>
+                                  progress == null
+                                      ? child
+                                      : _thumbGradient(opt.gradient),
                               errorBuilder: (context, e, s) =>
-                                  Container(color: const Color(0xFF334155)))
+                                  _thumbGradient(opt.gradient))
                         else
                           Container(
                             decoration: BoxDecoration(
@@ -1690,7 +1725,7 @@ class _BannerPickerSheetState extends State<_BannerPickerSheet> {
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize:   7,
+                                fontSize:   11,
                                 fontWeight: FontWeight.w700,
                                 color:      Colors.white,
                                 shadows:    [Shadow(blurRadius: 6)],
@@ -1793,12 +1828,13 @@ class _AccuracyGraphCardState extends State<_AccuracyGraphCard>
           // ── Header ──
           Row(
             children: [
-              const Text('📈', style: TextStyle(fontSize: 13)),
+              const Icon(Icons.show_chart_rounded,
+                  size: 16, color: Color(0xFF4ADE80)),
               const SizedBox(width: 7),
               const Text('ACCURACY OVER TIME',
                   style: TextStyle(
                     fontFamily: 'Montserrat',
-                    fontSize:   8,
+                    fontSize:   11,
                     fontWeight: FontWeight.w800,
                     color:      Color(0xFF4ADE80),
                     letterSpacing: 1.1,
@@ -1809,9 +1845,9 @@ class _AccuracyGraphCardState extends State<_AccuracyGraphCard>
                   '${history.length} predictions',
                   style: TextStyle(
                     fontFamily: 'Montserrat',
-                    fontSize:   8,
+                    fontSize:   11,
                     fontWeight: FontWeight.w600,
-                    color:      Colors.white.withValues(alpha: 0.4),
+                    color:      Colors.white.withValues(alpha: 0.7),
                   ),
                 ),
             ],
@@ -1830,7 +1866,7 @@ class _AccuracyGraphCardState extends State<_AccuracyGraphCard>
                     fontFamily: 'Montserrat',
                     fontSize:   11,
                     fontWeight: FontWeight.w500,
-                    color:      Colors.white.withValues(alpha: 0.3),
+                    color:      Colors.white.withValues(alpha: 0.7),
                     height:     1.5,
                   ),
                 ),
@@ -1995,7 +2031,7 @@ class _AccuracyLinePainter extends CustomPainter {
     void xLabel(int idx) {
       final o = pt(idx);
       _drawLabel(canvas, '${idx + 1}', o.dx - 5, padT + chartH + 5,
-          fontSize: 8);
+          fontSize: 11);
     }
     xLabel(0);
     if (n > 2) xLabel(n ~/ 2);

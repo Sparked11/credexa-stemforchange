@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'achievement_service.dart';
 
 // ── Badge model (public so auth_service.dart and profile_page.dart can use it) ─
 
@@ -160,11 +161,27 @@ class ProfileService {
   // Increment a usage counter and persist.
   static Future<void> _increment(String field) async {
     final prefs = await SharedPreferences.getInstance();
+    final before = _earnedTitles(data.value);
     final current = prefs.getInt(_key(field)) ?? 0;
     await prefs.setInt(_key(field), current + 1);
     await load();
     _afterMutation();
+    for (final b in kBadges) {
+      if (!before.contains(b.title) && _earnedTitles(data.value).contains(b.title)) {
+        AchievementService.announce(Achievement(
+          kind: AchievementKind.badge,
+          emoji: b.emoji,
+          title: b.title,
+          subtitle: b.desc,
+        ));
+      }
+    }
   }
+
+  static Set<String> _earnedTitles(ProfileData d) => {
+        for (final b in kBadges)
+          if (b.isEarned(d.checks, d.debiases, d.posts, d.quests)) b.title,
+      };
 
   static Future<void> incrementCheck()     => _increment('checks');
   static Future<void> incrementDebias()    => _increment('debiases');

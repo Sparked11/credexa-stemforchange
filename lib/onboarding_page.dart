@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'widgets/glass_button.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ONBOARDING PAGE
@@ -25,13 +26,13 @@ class _OnboardingPageState extends State<OnboardingPage>
     _Slide(
       eyebrow: 'THE PROBLEM',
       title: 'Misinformation\nIs Everywhere',
-      body: '68% of teens have shared false content without knowing it. '
-          'On social media there is zero editorial filter — and it\'s getting worse.',
+      body: 'Many people have shared false content without realising it. '
+          'On social media there is little editorial filter — and misinformation spreads fast.',
       accent: Color(0xFF22C55E),
       bgTop: Color(0xFF0A1628),
       bgBottom: Color(0xFF0D2137),
-      statValue: '68%',
-      statLabel: 'of teens spread misinformation unknowingly',
+      statValue: 'Many',
+      statLabel: 'people share false content without realising it',
     ),
     _Slide(
       eyebrow: 'THE SOLUTION',
@@ -41,8 +42,8 @@ class _OnboardingPageState extends State<OnboardingPage>
       accent: Color(0xFF6366F1),
       bgTop: Color(0xFF0D0D2B),
       bgBottom: Color(0xFF12122E),
-      statValue: '3×',
-      statLabel: 'more likely to catch misinformation after media literacy training',
+      statValue: 'Skill',
+      statLabel: 'Media literacy can be learned and sharpened with practice',
     ),
     _Slide(
       eyebrow: 'THE MISSION',
@@ -52,8 +53,8 @@ class _OnboardingPageState extends State<OnboardingPage>
       accent: Color(0xFFF59E0B),
       bgTop: Color(0xFF1A0F00),
       bgBottom: Color(0xFF1C1100),
-      statValue: '26%',
-      statLabel: 'of Americans can correctly identify fake news',
+      statValue: 'SDG 16',
+      statLabel: 'Peace, justice and strong institutions',
     ),
   ];
 
@@ -130,15 +131,19 @@ class _OnboardingPageState extends State<OnboardingPage>
                       TextButton(
                         onPressed: _complete,
                         style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          overlayColor: Colors.white.withValues(alpha: 0.2),
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 8),
+                              horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100)),
                         ),
                         child: Text(
                           'Skip',
                           style: TextStyle(
                             fontFamily: 'Montserrat',
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
                             color: Colors.white,
                             decoration: TextDecoration.none,
                           ),
@@ -207,34 +212,32 @@ class _OnboardingPageState extends State<OnboardingPage>
                 // ── CTA ────────────────────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: GestureDetector(
+                  child: GlassButton(
                     onTap: _next,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 17),
-                      decoration: BoxDecoration(
-                        color: slide.accent,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: slide.accent.withValues(alpha: 0.45),
-                            blurRadius: 22,
-                            offset: const Offset(0, 8),
+                    accent: slide.accent,
+                    onDark: true,
+                    height: 58,
+                    radius: 18,
+                    haptic: GlassHaptic.none,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _page < _slides.length - 1 ? 'Next' : 'Get Started',
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            decoration: TextDecoration.none,
                           ),
-                        ],
-                      ),
-                      child: Text(
-                        _page < _slides.length - 1 ? 'Next  →' : 'Get Started',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          decoration: TextDecoration.none,
                         ),
-                      ),
+                        if (_page < _slides.length - 1) ...[
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded,
+                              size: 20, color: Colors.white),
+                        ],
+                      ],
                     ),
                   ),
                 ),
@@ -287,7 +290,7 @@ class _SlideView extends StatelessWidget {
                   slide.eyebrow,
                   style: TextStyle(
                     fontFamily: 'Montserrat',
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: FontWeight.w800,
                     color: slide.accent,
                     letterSpacing: 1.3,
@@ -316,9 +319,9 @@ class _SlideView extends StatelessWidget {
                 slide.body,
                 style: TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 13,
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: Colors.white.withValues(alpha: 0.68),
+                  color: Colors.white.withValues(alpha: 0.85),
                   height: 1.6,
                   decoration: TextDecoration.none,
                 ),
@@ -352,9 +355,9 @@ class _SlideView extends StatelessWidget {
                         slide.statLabel,
                         style: TextStyle(
                           fontFamily: 'Montserrat',
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 0.62),
+                          color: Colors.white.withValues(alpha: 0.80),
                           height: 1.45,
                           decoration: TextDecoration.none,
                         ),
@@ -387,9 +390,33 @@ class _PhoneMockup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Image.asset(
-      _images[pageIndex],
-      fit: BoxFit.contain,
+    final maxH = MediaQuery.of(context).size.height * 0.36;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxH),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 28,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: slide.accent.withValues(alpha: 0.15),
+              blurRadius: 36,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: Image.asset(
+            _images[pageIndex],
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'widgets/adaptive_chrome.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -14,6 +15,9 @@ import 'services/ocr_service.dart';
 import 'services/profile_service.dart';
 import 'services/shared_content_router.dart';
 import 'services/user_progress_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/glass_button.dart';
 
 // ── Color system ──────────────────────────────────────────────────────────────
 const _kPrimary    = Color(0xFF1E293B);
@@ -37,56 +41,6 @@ TextStyle _m({
       height: height,
       letterSpacing: spacing,
     );
-
-// ── Press-animation button wrapper check ────────────────────────────────────────────
-class _PressBtn extends StatefulWidget {
-  const _PressBtn({required this.child, this.onTap});
-  final Widget child;
-  final VoidCallback? onTap;
-
-  @override
-  State<_PressBtn> createState() => _PressBtnState();
-}
-
-class _PressBtnState extends State<_PressBtn>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-      lowerBound: 0,
-      upperBound: 0.06,
-    );
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) { _c.forward(); HapticFeedback.mediumImpact(); },
-      onTapUp: (_) {
-        _c.reverse();
-        widget.onTap?.call();
-      },
-      onTapCancel: () => _c.reverse(),
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (_, child) =>
-            Transform.scale(scale: 1 - _c.value, child: child),
-        child: widget.child,
-      ),
-    );
-  }
-}
 
 // ── Animated score ring ───────────────────────────────────────────────────────
 class _ScoreRing extends StatelessWidget {
@@ -127,7 +81,7 @@ class _ScoreRing extends StatelessWidget {
                 ),
                 Text(
                   '/100',
-                  style: _m(size: size * 0.1, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55)),
+                  style: _m(size: size * 0.1, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7)),
                 ),
               ],
             ),
@@ -208,20 +162,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildNavbar() {
-    final cs = Theme.of(context).colorScheme;
-    final bgColor = Theme.of(context).scaffoldBackgroundColor;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      height: 64,
-      decoration: BoxDecoration(
-        color: _scrolled ? cs.surface : bgColor,
-        border: _scrolled
-            ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
-            : null,
-        boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
-            : [],
-      ),
+    return GlassTopBar.simple(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -476,7 +417,7 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() { _scanning = false; _error = e.toString().replaceFirst('Exception: ', ''); });
+      setState(() { _scanning = false; _error = friendlyError(e); });
     }
   }
 
@@ -516,7 +457,7 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
           const SizedBox(height: 8),
           Text(
             'Paste any headline or claim — we\'ll break down exactly why it might be misleading.',
-            style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.6),
+            style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.6),
           ),
           const SizedBox(height: 24),
 
@@ -562,7 +503,7 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
 
           // ── Example chips ──────────────────────────────────────────────────
           if (!_showResults && !_scanning) ...[
-            Text('Try an example:', style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
+            Text('Try an example:', style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7))),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -577,25 +518,11 @@ class _ExplainWhySectionState extends State<_ExplainWhySection>
           // ── Error ──────────────────────────────────────────────────────────
           if (_error != null) ...[
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFEDE8),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFEF4444)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('⚠', style: TextStyle(fontSize: 16)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(_error!,
-                        style: _m(size: 12, weight: FontWeight.w600, color: _kDanger, height: 1.5)),
-                  ),
-                ],
-              ),
+            AppErrorCard(
+              message: _error!,
+              onRetry: _scanning ? null : _scan,
             ),
+            const SizedBox(height: 16),
           ],
 
           // ── Results ────────────────────────────────────────────────────────
@@ -634,7 +561,7 @@ class _SectionLabel extends StatelessWidget {
         borderRadius: BorderRadius.circular(100),
       ),
       child: Text(text,
-          style: _m(size: 10, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
+          style: _m(size: 11, weight: FontWeight.w800, color: _kAccent, spacing: 1.1)),
     );
   }
 }
@@ -661,7 +588,7 @@ class _ExampleChip extends StatelessWidget {
             BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))
           ],
         ),
-        child: Text(short, style: _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+        child: Text(short, style: _m(size: 11, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
       ),
     );
   }
@@ -721,7 +648,7 @@ class _InputCard extends StatelessWidget {
                     color: _kAccent.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Center(child: Text('🔍', style: TextStyle(fontSize: 16))),
+                  child: const Icon(Icons.search_rounded, size: 20, color: _kAccent),
                 ),
                 const SizedBox(width: 10),
                 Text('Claim or Headline',
@@ -737,7 +664,7 @@ class _InputCard extends StatelessWidget {
               style: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface, height: 1.6),
               decoration: InputDecoration(
                 hintText: 'Paste a headline, tweet, quote, or any claim…',
-                hintStyle: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.45), height: 1.6),
+                hintStyle: _m(size: 14, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.6), height: 1.6),
                 filled: true,
                 fillColor: bgColor,
                 contentPadding: const EdgeInsets.all(16),
@@ -776,7 +703,7 @@ class _InputCard extends StatelessWidget {
                     ),
                     GestureDetector(
                       onTap: scanning ? null : () { HapticFeedback.lightImpact(); onClearImage!(); },
-                      child: Icon(Icons.close_rounded, size: 20, color: cs.onSurface.withValues(alpha: 0.55)),
+                      child: Icon(Icons.close_rounded, size: 20, color: cs.onSurface.withValues(alpha: 0.7)),
                     ),
                   ],
                 ),
@@ -786,46 +713,28 @@ class _InputCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: _PressBtn(
+                    child: GlassButton(
+                      label: 'Gallery',
+                      icon: Icons.photo_library_outlined,
+                      accent: _kPrimary,
+                      height: 46,
+                      radius: 12,
+                      fontSize: 13,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                       onTap: scanning ? null : onPickImage,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        decoration: BoxDecoration(
-                          color: _kPrimary,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.photo_library_outlined, size: 15, color: Colors.white),
-                            const SizedBox(width: 6),
-                            Text('Gallery',
-                                style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                          ],
-                        ),
-                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: _PressBtn(
+                    child: GlassButton(
+                      label: 'Camera',
+                      icon: Icons.camera_alt_outlined,
+                      accent: _kAccent,
+                      height: 46,
+                      radius: 12,
+                      fontSize: 13,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                       onTap: scanning ? null : onTakePhoto,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        decoration: BoxDecoration(
-                          color: _kAccent,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.camera_alt_outlined, size: 15, color: Colors.white),
-                            const SizedBox(width: 6),
-                            Text('Camera',
-                                style: _m(size: 13, weight: FontWeight.w700, color: Colors.white)),
-                          ],
-                        ),
-                      ),
                     ),
                   ),
                 ],
@@ -834,48 +743,15 @@ class _InputCard extends StatelessWidget {
             ],
 
             // Scan button
-            _PressBtn(
+            GlassButton(
+              label: scanning ? 'Analyzing…' : btnLabel,
+              icon: hasImage ? Icons.image_search_rounded : Icons.bolt_rounded,
+              accent: _kAccent,
+              height: 56,
+              radius: 14,
+              fontSize: 15,
+              loading: scanning,
               onTap: onScan,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  gradient: scanning
-                      ? null
-                      : const LinearGradient(
-                          colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                  color: scanning ? const Color(0xFF86EFAC) : null,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: scanning
-                      ? []
-                      : [BoxShadow(color: _kAccent.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: scanning
-                      ? [
-                          const SizedBox(
-                            width: 18, height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
-                          ),
-                          const SizedBox(width: 10),
-                          Text('Analyzing…',
-                              style: _m(size: 15, weight: FontWeight.w800, color: Colors.white)),
-                        ]
-                      : [
-                          Text(hasImage ? '🖼' : '⚡', style: const TextStyle(fontSize: 16)),
-                          const SizedBox(width: 8),
-                          Text(btnLabel,
-                              style: _m(size: 15, weight: FontWeight.w800, color: Colors.white)),
-                        ],
-                ),
-              ),
             ),
           ],
         ),
@@ -915,23 +791,23 @@ class _AnalysisAnimationState extends State<_AnalysisAnimation>
   void initState() {
     super.initState();
     final claim = widget.claim;
-    final short = claim.length > 48 ? '${claim.substring(0, 45)}…' : claim;
+    final short = claim.length > 40 ? '${claim.substring(0, 37)}…' : claim;
     _messages = [
       (phase: 0.08, model: 0, text: 'Evaluating: "$short"'),
-      (phase: 0.17, model: 1, text: 'Cross-referencing claim against known fact-check databases…'),
-      (phase: 0.25, model: 2, text: 'Scanning for emotional language and persuasive framing…'),
-      (phase: 0.34, model: 0, text: 'Source attribution appears absent or unverifiable.'),
-      (phase: 0.42, model: 2, text: 'Linguistic signals suggest persuasive framing.'),
-      (phase: 0.50, model: 1, text: 'No peer-reviewed citations found to support this claim.'),
+      (phase: 0.17, model: 1, text: 'Cross-referencing "$short" against fact-check databases…'),
+      (phase: 0.25, model: 2, text: 'Scanning "$short" for emotional language…'),
+      (phase: 0.34, model: 0, text: 'Looking for a verifiable source behind this claim…'),
+      (phase: 0.42, model: 2, text: 'Checking the framing and wording of the claim…'),
+      (phase: 0.50, model: 1, text: 'Searching for citations that support "$short"…'),
       (phase: 0.58, model: 0, text: 'Credibility indicators are inconsistent with reliable reporting.'),
-      (phase: 0.65, model: 1, text: 'Concur — statistical claims lack methodological grounding.'),
-      (phase: 0.72, model: 2, text: 'Pattern matches known misinformation structures.'),
+      (phase: 0.65, model: 1, text: 'Comparing notes on the evidence so far…'),
+      (phase: 0.72, model: 2, text: 'Checking against known misinformation patterns…'),
       (phase: 0.80, model: 0, text: 'Finalizing credibility score and evidence assessment…'),
       (phase: 0.87, model: 1, text: 'Scores submitted to synthesis layer.'),
       (phase: 0.94, model: 2, text: 'Consensus reached. Deferring to final synthesis.'),
     ];
 
-    _phaseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 11))
+    _phaseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 6500))
       ..forward();
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))
       ..repeat();
@@ -1056,7 +932,7 @@ class _AnalysisAnimationState extends State<_AnalysisAnimation>
                                 m.label,
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
-                                  fontSize: 8,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w700,
                                   color: isSynth ? _kAccent : m.color,
                                 ),
@@ -1111,7 +987,7 @@ class _AnalysisAnimationState extends State<_AnalysisAnimation>
                                 shape: BoxShape.circle,
                                 color: cs.surface,
                                 border: Border.all(
-                                  color: meta.color.withValues(alpha: 0.45),
+                                  color: meta.color.withValues(alpha: 0.6),
                                   width: 1.5,
                                 ),
                               ),
@@ -1129,7 +1005,7 @@ class _AnalysisAnimationState extends State<_AnalysisAnimation>
                                     meta.label,
                                     style: TextStyle(
                                       fontFamily: 'Montserrat',
-                                      fontSize: 10,
+                                      fontSize: 11,
                                       fontWeight: FontWeight.w800,
                                       color: meta.color,
                                     ),
@@ -1177,7 +1053,7 @@ class _AnalysisAnimationState extends State<_AnalysisAnimation>
               child: Text(
                 _phaseLabel(phase),
                 key: ValueKey(_phaseLabel(phase)),
-                style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55)),
+                style: _m(size: 12, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7)),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -1285,25 +1161,151 @@ class _CouncilPainter extends CustomPainter {
       old.phase != phase || old.pulse != pulse;
 }
 
-// ── Verdict / flag style helpers ──────────────────────────────────────────────
-({Color color, String label, String icon}) _verdictStyle(String v) {
-  switch (v) {
-    case 'LIKELY_TRUE':  return (color: _kAccent,                label: 'LIKELY TRUE',      icon: '✅');
-    case 'LIKELY_FALSE': return (color: _kDanger,                label: 'LIKELY MISLEADING', icon: '⚠');
-    case 'SATIRE':       return (color: const Color(0xFF8B5CF6), label: 'SATIRE',            icon: '😄');
-    default:             return (color: const Color(0xFFF59E0B), label: 'UNCERTAIN',         icon: '⚠');
+// ── Shared card decoration ────────────────────────────────────────────────────
+BoxDecoration _cardDeco(ColorScheme cs) => BoxDecoration(
+      color: cs.surface,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      border: Border.all(color: cs.outlineVariant),
+      boxShadow: [
+        BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6)),
+      ],
+    );
+
+class _VerdictPill extends StatelessWidget {
+  const _VerdictPill({required this.style, this.size = 11});
+  final ({Color color, String label, IconData icon}) style;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: size * 0.8, vertical: size * 0.45),
+      decoration: BoxDecoration(
+        color: style.color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(style.icon, size: size + 3, color: style.color),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(style.label,
+                overflow: TextOverflow.ellipsis,
+                style: _m(size: size, weight: FontWeight.w800, color: style.color, spacing: 0.4)),
+          ),
+        ],
+      ),
+    );
   }
 }
 
-({String emoji, Color accent}) _flagStyle(String type) {
+/// Collapsible results section: header card with icon, title and chevron.
+class _CollapsibleSection extends StatefulWidget {
+  const _CollapsibleSection({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.child,
+    this.bare = false,
+  });
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final Widget child;
+  final bool bare; // child brings its own card
+  @override
+  State<_CollapsibleSection> createState() => _CollapsibleSectionState();
+}
+
+class _CollapsibleSectionState extends State<_CollapsibleSection> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final header = InkWell(
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        setState(() => _open = !_open);
+      },
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            IconBadge(icon: widget.icon, color: widget.color, size: 38),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.title, style: _m(size: 14, weight: FontWeight.w800, color: cs.onSurface)),
+                  const SizedBox(height: 2),
+                  Text(widget.subtitle,
+                      style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
+                ],
+              ),
+            ),
+            AnimatedRotation(
+              turns: _open ? 0.5 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: Icon(Icons.keyboard_arrow_down_rounded, size: 28, color: cs.onSurface.withValues(alpha: 0.7)),
+            ),
+          ],
+        ),
+      ),
+    );
+    final body = AnimatedSize(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOut,
+      alignment: Alignment.topCenter,
+      child: !_open
+          ? const SizedBox(width: double.infinity)
+          : widget.bare
+              ? Padding(padding: const EdgeInsets.only(top: 12), child: widget.child)
+              : Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: widget.child),
+    );
+    if (widget.bare) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(decoration: _cardDeco(cs), child: Material(color: Colors.transparent, child: header)),
+          body,
+        ],
+      );
+    }
+    return Container(
+      decoration: _cardDeco(cs),
+      child: Material(
+        color: Colors.transparent,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [header, body]),
+      ),
+    );
+  }
+}
+
+// ── Verdict / flag style helpers ──────────────────────────────────────────────
+({Color color, String label, IconData icon}) _verdictStyle(String v) {
+  switch (v) {
+    case 'LIKELY_TRUE':  return (color: _kAccent,                label: 'LIKELY TRUE',      icon: Icons.check_circle_rounded);
+    case 'LIKELY_FALSE': return (color: _kDanger,                label: 'LIKELY MISLEADING', icon: Icons.warning_amber_rounded);
+    case 'SATIRE':       return (color: const Color(0xFF8B5CF6), label: 'SATIRE',            icon: Icons.theater_comedy_rounded);
+    default:             return (color: const Color(0xFFF59E0B), label: 'UNCERTAIN',         icon: Icons.help_rounded);
+  }
+}
+
+({IconData icon, Color accent}) _flagStyle(String type) {
   switch (type) {
-    case 'EMOTIONAL_LANGUAGE': return (emoji: '🔥', accent: const Color(0xFFF59E0B));
-    case 'NO_SOURCE':          return (emoji: '📍', accent: const Color(0xFFEF4444));
-    case 'KNOWN_PATTERN':      return (emoji: '🔄', accent: const Color(0xFF8B5CF6));
-    case 'MISLEADING_STATS':   return (emoji: '📊', accent: const Color(0xFFF97316));
-    case 'OUTDATED':           return (emoji: '🕐', accent: const Color(0xFF0EA5E9));
-    case 'SATIRE':             return (emoji: '😄', accent: const Color(0xFF8B5CF6));
-    default:                   return (emoji: '🚩', accent: _kSecondary);
+    case 'EMOTIONAL_LANGUAGE': return (icon: Icons.local_fire_department_rounded, accent: const Color(0xFFF59E0B));
+    case 'NO_SOURCE':          return (icon: Icons.location_off_rounded, accent: const Color(0xFFEF4444));
+    case 'KNOWN_PATTERN':      return (icon: Icons.autorenew_rounded, accent: const Color(0xFF8B5CF6));
+    case 'MISLEADING_STATS':   return (icon: Icons.bar_chart_rounded, accent: const Color(0xFFF97316));
+    case 'OUTDATED':           return (icon: Icons.schedule_rounded, accent: const Color(0xFF0EA5E9));
+    case 'SATIRE':             return (icon: Icons.theater_comedy_rounded, accent: const Color(0xFF8B5CF6));
+    default:                   return (icon: Icons.flag_rounded, accent: _kSecondary);
   }
 }
 
@@ -1328,6 +1330,7 @@ class _ResultsPanelState extends State<_ResultsPanel> {
   bool _sourcesExpanded = false;
   bool _loadingSources = false;
   bool _sourcesError = false;
+  Object? _sourcesErr;
   bool _debateMode = false;
   List<({String title, String url, String description})> _sources = [];
 
@@ -1399,9 +1402,9 @@ class _ResultsPanelState extends State<_ResultsPanel> {
         return;
       }
       setState(() { _sources = parsed; _loadingSources = false; });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() { _loadingSources = false; _sourcesError = true; });
+      setState(() { _loadingSources = false; _sourcesError = true; _sourcesErr = e; });
       // Keep _sourcesExpanded = true so the error card is visible
     }
   }
@@ -1416,65 +1419,76 @@ class _ResultsPanelState extends State<_ResultsPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Score + summary ────────────────────────────────────────────────
+        // ── Hero verdict ───────────────────────────────────────────────────
         Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: cs.surface,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(color: const Color(0x0F000000), blurRadius: 20, offset: const Offset(0, 6))
-            ],
-          ),
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+          decoration: _cardDeco(cs),
           child: Column(
             children: [
-              Row(
-                children: [
-                  _ScoreRing(score: s.finalScore.toDouble(), color: vs.color, size: 80, strokeWidth: 8),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: vs.color.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(100),
-                          ),
-                          child: Text('${vs.icon} ${vs.label}',
-                              style: _m(size: 10, weight: FontWeight.w800, color: vs.color, spacing: 0.5)),
-                        ),
-                        const SizedBox(height: 8),
-                        Text('Credibility Score: ${s.finalScore}/100',
-                            style: _m(size: 13, weight: FontWeight.w700, color: cs.onSurface)),
-                        const SizedBox(height: 4),
-                        Text('${s.flags.length} flag${s.flags.length == 1 ? '' : 's'} detected',
-                            style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
-                      ],
-                    ),
-                  ),
-                ],
+              _ScoreRing(score: s.finalScore.toDouble(), color: vs.color, size: 140, strokeWidth: 12),
+              const SizedBox(height: 16),
+              _VerdictPill(style: vs, size: 14),
+              const SizedBox(height: 8),
+              Text(
+                'Credibility score ${s.finalScore}/100'
+                '${s.flags.isEmpty ? '' : '  ·  ${s.flags.length} flag${s.flags.length == 1 ? '' : 's'}'}',
+                textAlign: TextAlign.center,
+                style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7)),
               ),
               const SizedBox(height: 16),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: bgColor,
-                  borderRadius: BorderRadius.circular(12),
+                  color: vs.color.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: Text('💡 ${s.summary}',
-                    style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface, height: 1.6)),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    IconBadge(icon: Icons.lightbulb_rounded, color: vs.color, size: 30),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(s.summary,
+                          style: _m(size: 13, weight: FontWeight.w600, color: cs.onSurface, height: 1.55)),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
         ),
         const SizedBox(height: 16),
 
-        // ── Bias Fingerprint ───────────────────────────────────────────────
-        BiasFingerprintCard(
-          fingerprint: BiasFingerprint.fromAnalysis(widget.result),
+        // ── Flags ──────────────────────────────────────────────────────────
+        if (s.flags.isNotEmpty) ...[
+          Row(
+            children: [
+              Text('Why we flagged this', style: _m(size: 16, weight: FontWeight.w900, color: cs.onSurface)),
+              const Spacer(),
+              Text('${s.flags.length} ${s.flags.length == 1 ? 'reason' : 'reasons'}',
+                  style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...s.flags.asMap().entries.map((e) => Padding(
+            padding: EdgeInsets.only(bottom: e.key < s.flags.length - 1 ? 12 : 0),
+            child: _FlagCard(flag: e.value),
+          )),
+          const SizedBox(height: 16),
+        ],
+
+        // ── Bias Fingerprint (collapsed by default) ────────────────────────
+        _CollapsibleSection(
+          icon: Icons.fingerprint_rounded,
+          color: AppColors.indigo,
+          title: 'Bias Fingerprint',
+          subtitle: 'How the claim leans and why',
+          bare: true,
+          child: BiasFingerprintCard(
+            fingerprint: BiasFingerprint.fromAnalysis(widget.result),
+          ),
         ),
         const SizedBox(height: 16),
 
@@ -1485,27 +1499,20 @@ class _ResultsPanelState extends State<_ResultsPanel> {
               .where((m) => !m.model.contains('Web Search'))
               .toList();
           if (aiModels.isEmpty) return const SizedBox.shrink();
-          return Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: cs.outlineVariant),
-            ),
+          return _CollapsibleSection(
+            icon: Icons.groups_rounded,
+            color: AppColors.sky,
+            title: 'Model Council',
+            subtitle: '${aiModels.length} AI models weighed in',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Text('🤖', style: TextStyle(fontSize: 15)),
-                    const SizedBox(width: 8),
-                    Text('Model Council', style: _m(size: 14, weight: FontWeight.w900, color: cs.onSurface)),
-                    const Spacer(),
-                    _CouncilModeToggle(
-                      debateMode: _debateMode,
-                      onChanged: (v) => setState(() => _debateMode = v),
-                    ),
-                  ],
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _CouncilModeToggle(
+                    debateMode: _debateMode,
+                    onChanged: (v) => setState(() => _debateMode = v),
+                  ),
                 ),
                 const SizedBox(height: 14),
                 AnimatedSwitcher(
@@ -1541,17 +1548,17 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                 ),
               ],
             ),
-          );          // return Container
-          }),         // Builder
-          const SizedBox(height: 12),
+          );
+          }),
+          const SizedBox(height: 16),
         ],
 
         // ── Agreements ─────────────────────────────────────────────────────
         if (s.agreements.isNotEmpty) ...[
           _PointsCard(
-            icon: '🤝', title: 'All models agree',
+            icon: Icons.handshake_rounded, title: 'All models agree',
             points: s.agreements,
-            bg: const Color(0xFFEFFFF5), accent: _kAccent,
+            accent: _kAccent,
           ),
           const SizedBox(height: 12),
         ],
@@ -1559,87 +1566,49 @@ class _ResultsPanelState extends State<_ResultsPanel> {
         // ── Conflicts ──────────────────────────────────────────────────────
         if (s.conflicts.isNotEmpty) ...[
           _PointsCard(
-            icon: '⚡', title: 'Where they differ',
+            icon: Icons.bolt_rounded, title: 'Where they differ',
             points: s.conflicts,
-            bg: const Color(0xFFFFFBEB), accent: const Color(0xFFF59E0B),
+            accent: const Color(0xFFF59E0B),
           ),
-          const SizedBox(height: 16),
-        ],
-
-        // ── Flags ──────────────────────────────────────────────────────────
-        if (s.flags.isNotEmpty) ...[
-          Row(
-            children: [
-              Text('Why we flagged this', style: _m(size: 16, weight: FontWeight.w900, color: cs.onSurface)),
-              const Spacer(),
-              Text('${s.flags.length} ${s.flags.length == 1 ? 'reason' : 'reasons'}',
-                  style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...s.flags.asMap().entries.map((e) => Padding(
-            padding: EdgeInsets.only(bottom: e.key < s.flags.length - 1 ? 12 : 0),
-            child: _FlagCard(flag: e.value),
-          )),
           const SizedBox(height: 16),
         ],
 
         // ── What to do ─────────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: cs.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: cs.outlineVariant),
-          ),
+          decoration: _cardDeco(cs),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('What should you do?', style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
               const SizedBox(height: 12),
               ...[
-                ('✅', 'Check a fact-checking site like Snopes or FullFact'),
-                ('🔗', 'Look for peer-reviewed studies, not social posts'),
-                ('🤔', 'Ask: Who benefits if people believe this?'),
+                (Icons.fact_check_rounded, AppColors.green, 'Check a fact-checking site like Snopes or FullFact'),
+                (Icons.menu_book_rounded, AppColors.sky, 'Look for peer-reviewed studies, not social posts'),
+                (Icons.psychology_alt_rounded, AppColors.indigo, 'Ask: Who benefits if people believe this?'),
               ].map((t) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(t.$1, style: const TextStyle(fontSize: 14)),
+                    IconBadge(icon: t.$1, color: t.$2, size: 28),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(t.$2,
-                        style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.5))),
+                    Expanded(child: Text(t.$3,
+                        style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.5))),
                   ],
                 ),
               )),
-              _PressBtn(
-                onTap: _loadingSources ? null : _toggleSources,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: _sourcesExpanded ? _kAccent.withValues(alpha: 0.06) : Colors.transparent,
-                    border: Border.all(color: _kAccent, width: 1.5),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: _loadingSources
-                      ? const SizedBox(
-                          height: 18,
-                          child: Center(
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: _kAccent),
-                            ),
-                          ),
-                        )
-                      : Text(
-                          _sourcesExpanded ? 'Hide Trusted Sources ↑' : 'View Trusted Sources →',
-                          textAlign: TextAlign.center,
-                          style: _m(size: 13, weight: FontWeight.w700, color: _kAccent),
-                        ),
-                ),
+              GlassButton(
+                label: _sourcesExpanded ? 'Hide Trusted Sources ↑' : 'View Trusted Sources →',
+                accent: _kAccent,
+                filled: false,
+                height: 46,
+                radius: 12,
+                fontSize: 13,
+                foreground: _kAccent,
+                loading: _loadingSources,
+                haptic: GlassHaptic.light,
+                onTap: _toggleSources,
               ),
               // ── Expanding sources card ─────────────────────────────────
               AnimatedSize(
@@ -1658,53 +1627,30 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                                 ),
                               )
                             : _sourcesError
-                                ? Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(14),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFFFF7F7),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: const Color(0xFFFFCDD2)),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Could not load sources.',
-                                            style: _m(
-                                                size: 12,
-                                                weight: FontWeight.w700,
-                                                color: _kDanger)),
-                                        const SizedBox(height: 6),
-                                        GestureDetector(
-                                          onTap: () {
-                                            setState(() {
-                                              _sourcesError = false;
-                                              _sourcesExpanded = false;
-                                            });
-                                            _toggleSources();
-                                          },
-                                          child: Text('Tap here to retry →',
-                                              style: _m(
-                                                  size: 12,
-                                                  weight: FontWeight.w600,
-                                                  color: _kAccent)),
-                                        ),
-                                      ],
-                                    ),
+                                ? AppErrorCard(
+                                    title: 'Could not load sources',
+                                    message: friendlyError(_sourcesErr),
+                                    onRetry: () {
+                                      setState(() {
+                                        _sourcesError = false;
+                                        _sourcesExpanded = false;
+                                      });
+                                      _toggleSources();
+                                    },
                                   )
                                 : Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          const Text('🔗',
-                                              style: TextStyle(fontSize: 13)),
+                                          const Icon(Icons.link_rounded,
+                                              size: 16, color: AppColors.sky),
                                           const SizedBox(width: 6),
                                           Text('Trusted Sources',
                                               style: _m(
                                                   size: 12,
                                                   weight: FontWeight.w800,
-                                                  color: cs.onSurface.withValues(alpha: 0.55))),
+                                                  color: cs.onSurface.withValues(alpha: 0.7))),
                                         ],
                                       ),
                                       const SizedBox(height: 10),
@@ -1773,26 +1719,24 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                                                                   weight:
                                                                       FontWeight
                                                                           .w500,
-                                                                  color: cs.onSurface.withValues(alpha: 0.55),
+                                                                  color: cs.onSurface.withValues(alpha: 0.7),
                                                                   height:
                                                                       1.4)),
                                                           const SizedBox(
                                                               height: 6),
                                                           Text(src.url,
                                                               style: _m(
-                                                                size: 10,
+                                                                size: 11,
                                                                 weight:
                                                                     FontWeight
                                                                         .w600,
-                                                                color: const Color(
-                                                                    0xFF1D4ED8),
+                                                                color: AppColors.sky,
                                                               ).copyWith(
                                                                 decoration:
                                                                     TextDecoration
                                                                         .underline,
                                                                 decorationColor:
-                                                                    const Color(
-                                                                        0xFF1D4ED8),
+                                                                    AppColors.sky,
                                                               ),
                                                               overflow:
                                                                   TextOverflow
@@ -1805,8 +1749,7 @@ class _ResultsPanelState extends State<_ResultsPanel> {
                                                     const Icon(
                                                         Icons.open_in_new,
                                                         size: 15,
-                                                        color: Color(
-                                                            0xFF1D4ED8)),
+                                                        color: AppColors.sky),
                                                 ],
                                               ),
                                             ),
@@ -1839,9 +1782,9 @@ class _ModelScoreRow extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: 112,
+          width: 92,
           child: Text(model.model,
-              style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55)),
+              style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7)),
               overflow: TextOverflow.ellipsis),
         ),
         const SizedBox(width: 8),
@@ -1881,9 +1824,9 @@ class _ModelScoreRow extends StatelessWidget {
         const SizedBox(width: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(color: vs.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(100)),
-          child: Text(model.verdict.replaceAll('_', ' '),
-              style: _m(size: 9, weight: FontWeight.w800, color: vs.color)),
+          decoration: BoxDecoration(color: vs.color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(100)),
+          child: Text(vs.label.replaceAll('LIKELY ', ''),
+              style: _m(size: 11, weight: FontWeight.w800, color: vs.color)),
         ),
       ],
     );
@@ -1903,14 +1846,14 @@ class _ModelFailedRow extends StatelessWidget {
         SizedBox(
           width: 112,
           child: Text(model.model,
-              style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55)),
+              style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7)),
               overflow: TextOverflow.ellipsis),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            model.error ?? 'Failed',
-            style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55)),
+            'Temporarily unavailable',
+            style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7)),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1922,7 +1865,7 @@ class _ModelFailedRow extends StatelessWidget {
             borderRadius: BorderRadius.circular(100),
           ),
           child: Text('UNAVAILABLE',
-              style: _m(size: 9, weight: FontWeight.w800, color: cs.onSurface.withValues(alpha: 0.55))),
+              style: _m(size: 11, weight: FontWeight.w800, color: cs.onSurface.withValues(alpha: 0.7))),
         ),
       ],
     );
@@ -1933,11 +1876,12 @@ class _ModelFailedRow extends StatelessWidget {
 class _PointsCard extends StatelessWidget {
   const _PointsCard({
     required this.icon, required this.title,
-    required this.points, required this.bg, required this.accent,
+    required this.points, required this.accent,
   });
-  final String icon, title;
+  final IconData icon;
+  final String title;
   final List<String> points;
-  final Color bg, accent;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
@@ -1945,17 +1889,16 @@ class _PointsCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
+      decoration: _cardDeco(cs).copyWith(
+        color: Color.alphaBlend(accent.withValues(alpha: 0.08), cs.surface),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Text(icon, style: const TextStyle(fontSize: 15)),
-            const SizedBox(width: 8),
+            IconBadge(icon: icon, color: accent, size: 30),
+            const SizedBox(width: 10),
             Text(title, style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
           ]),
           const SizedBox(height: 10),
@@ -1990,8 +1933,11 @@ class _FlagCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: fs.accent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: fs.accent.withValues(alpha: 0.2)),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: fs.accent.withValues(alpha: 0.25)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 6)),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2001,9 +1947,8 @@ class _FlagCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: cs.surface,
               borderRadius: BorderRadius.circular(12),
-              boxShadow: [BoxShadow(color: const Color(0x0F000000), blurRadius: 8, offset: const Offset(0, 2))],
             ),
-            child: Center(child: Text(fs.emoji, style: const TextStyle(fontSize: 18))),
+            child: Icon(fs.icon, size: 22, color: fs.accent),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -2013,7 +1958,7 @@ class _FlagCard extends StatelessWidget {
                 Text(_titleCase(flag.type), style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
                 const SizedBox(height: 5),
                 Text(flag.explanation,
-                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.55)),
+                    style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.55)),
                 if (flag.quote.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Text('"${flag.quote}"',
@@ -2085,7 +2030,7 @@ class _ModePill extends StatelessWidget {
         ),
         child: Text(
           label,
-          style: _m(size: 11, weight: FontWeight.w700, color: active ? cs.onSurface : cs.onSurface.withValues(alpha: 0.55)),
+          style: _m(size: 11, weight: FontWeight.w700, color: active ? cs.onSurface : cs.onSurface.withValues(alpha: 0.7)),
         ),
       ),
     );
@@ -2212,8 +2157,8 @@ class _DebateBubbleState extends State<_DebateBubble> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(color: vs.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(100)),
-                child: Text('${vs.icon} ${vs.label}',
-                    style: _m(size: 9, weight: FontWeight.w800, color: vs.color)),
+                child: Text(vs.label.replaceAll('LIKELY ', ''),
+                    style: _m(size: 11, weight: FontWeight.w800, color: vs.color)),
               ),
             ],
           ),
@@ -2236,7 +2181,7 @@ class _DebateBubbleState extends State<_DebateBubble> {
           Row(
             children: [
               Text('Score: ${widget.model.credibilityScore}/100',
-                  style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
+                  style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7))),
               const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2245,7 +2190,7 @@ class _DebateBubbleState extends State<_DebateBubble> {
                   borderRadius: BorderRadius.circular(100),
                 ),
                 child: Text('${widget.model.confidence} confidence',
-                    style: _m(size: 9, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.55))),
+                    style: _m(size: 11, weight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.7))),
               ),
             ],
           ),
@@ -2268,18 +2213,18 @@ class _DisputeChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFF7ED),
+          color: AppColors.amber.withValues(alpha: 0.14),
           borderRadius: BorderRadius.circular(100),
-          border: Border.all(color: const Color(0xFFFBBF24).withValues(alpha: 0.5)),
+          border: Border.all(color: AppColors.amber.withValues(alpha: 0.5)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('⚡', style: TextStyle(fontSize: 11)),
+            const Icon(Icons.bolt_rounded, size: 15, color: AppColors.amber),
             const SizedBox(width: 6),
             Text(
               '${_short(modelA)} & ${_short(modelB)} disagree on verdict',
-              style: _m(size: 11, weight: FontWeight.w700, color: const Color(0xFFD97706)),
+              style: _m(size: 11, weight: FontWeight.w700, color: Theme.of(context).colorScheme.onSurface),
             ),
           ],
         ),
@@ -2314,7 +2259,7 @@ class _FinalRulingCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text('🏛️', style: TextStyle(fontSize: 14)),
+              IconBadge(icon: Icons.account_balance_rounded, color: vs.color, size: 28),
               const SizedBox(width: 8),
               Expanded(
                 child: Text('Why the Council decided:',
@@ -2323,8 +2268,11 @@ class _FinalRulingCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(color: vs.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(100)),
-                child: Text('${vs.icon} ${vs.label}',
-                    style: _m(size: 9, weight: FontWeight.w800, color: vs.color)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(vs.icon, size: 14, color: vs.color),
+                  const SizedBox(width: 4),
+                  Text(vs.label, style: _m(size: 11, weight: FontWeight.w800, color: vs.color)),
+                ]),
               ),
             ],
           ),
@@ -2335,7 +2283,7 @@ class _FinalRulingCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('⚡', style: TextStyle(fontSize: 11)),
+                  const Icon(Icons.bolt_rounded, size: 15, color: AppColors.amber),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(c,
@@ -2421,7 +2369,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('🎉', style: TextStyle(fontSize: 40)),
+          const IconBadge(icon: Icons.celebration_rounded, color: AppColors.green, size: 64),
           const SizedBox(height: 12),
           Text(
             'Thanks! Your feedback helps improve Credexa.',
@@ -2462,16 +2410,16 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: cs.surface,
+              color: AppColors.indigo.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(100),
             ),
             child: Text(
-              '📊  SESSION FEEDBACK',
+              'SESSION FEEDBACK',
               style: TextStyle(
                 fontFamily: 'Montserrat',
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF1D4ED8),
+                color: AppColors.indigo,
                 letterSpacing: 1.0,
               ),
             ),
@@ -2499,7 +2447,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                     padding: const EdgeInsets.symmetric(vertical: 18),
                     decoration: BoxDecoration(
                       color: _positive == true
-                          ? const Color(0xFFEFFFF5)
+                          ? _kAccent.withValues(alpha: 0.12)
                           : cs.surface,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
@@ -2511,7 +2459,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                     ),
                     child: Column(
                       children: [
-                        const Text('👍', style: TextStyle(fontSize: 32)),
+                        Icon(Icons.thumb_up_rounded, size: 32, color: _positive == true ? _kAccent : cs.onSurface.withValues(alpha: 0.7)),
                         const SizedBox(height: 6),
                         Text(
                           'Yes',
@@ -2521,7 +2469,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                             fontWeight: FontWeight.w800,
                             color: _positive == true
                                 ? _kAccent
-                                : cs.onSurface.withValues(alpha: 0.55),
+                                : cs.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
                       ],
@@ -2538,7 +2486,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                     padding: const EdgeInsets.symmetric(vertical: 18),
                     decoration: BoxDecoration(
                       color: _positive == false
-                          ? const Color(0xFFFFEDE8)
+                          ? _kDanger.withValues(alpha: 0.12)
                           : cs.surface,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
@@ -2550,7 +2498,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                     ),
                     child: Column(
                       children: [
-                        const Text('👎', style: TextStyle(fontSize: 32)),
+                        Icon(Icons.thumb_down_rounded, size: 32, color: _positive == false ? _kDanger : cs.onSurface.withValues(alpha: 0.7)),
                         const SizedBox(height: 6),
                         Text(
                           'Not really',
@@ -2560,7 +2508,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                             fontWeight: FontWeight.w800,
                             color: _positive == false
                                 ? _kDanger
-                                : cs.onSurface.withValues(alpha: 0.55),
+                                : cs.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
                       ],
@@ -2579,7 +2527,7 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
             style: _m(size: 13, weight: FontWeight.w500, color: cs.onSurface),
             decoration: InputDecoration(
               hintText: 'Optional: anything specific? (e.g. "I caught a fake headline!")',
-              hintStyle: _m(size: 12, weight: FontWeight.w400, color: cs.onSurface.withValues(alpha: 0.45)),
+              hintStyle: _m(size: 12, weight: FontWeight.w400, color: cs.onSurface.withValues(alpha: 0.6)),
               filled: true,
               fillColor: cs.surface,
               contentPadding: const EdgeInsets.all(14),
@@ -2591,49 +2539,24 @@ class _MicroSurveySheetState extends State<_MicroSurveySheet> {
                 borderRadius: BorderRadius.circular(14),
                 borderSide: const BorderSide(color: _kAccent, width: 2),
               ),
-              counterStyle: _m(size: 10, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55)),
+              counterStyle: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7)),
             ),
           ),
           const SizedBox(height: 12),
           // Submit
-          GestureDetector(
+          GlassButton(
+            label: 'Submit Feedback',
+            accent: _kAccent,
+            height: 52,
+            radius: 14,
+            loading: _submitting,
             onTap: _positive == null ? null : _submit,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              decoration: BoxDecoration(
-                color: _positive == null
-                    ? cs.outlineVariant
-                    : _kAccent,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: _submitting
-                  ? const Center(
-                      child: SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      ),
-                    )
-                  : Text(
-                      'Submit Feedback',
-                      textAlign: TextAlign.center,
-                      style: _m(
-                        size: 14,
-                        weight: FontWeight.w800,
-                        color: _positive == null ? cs.onSurface.withValues(alpha: 0.55) : Colors.white,
-                      ),
-                    ),
-            ),
           ),
           const SizedBox(height: 8),
           Center(
             child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Text('Skip', style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.55))),
+              onTap: () { HapticFeedback.lightImpact(); Navigator.of(context).pop(); },
+              child: Text('Skip', style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.7))),
             ),
           ),
           const SizedBox(height: 8),
@@ -2669,7 +2592,7 @@ class _PredictionPrompt extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text('🤔', style: TextStyle(fontSize: 16)),
+              const IconBadge(icon: Icons.psychology_alt_rounded, color: AppColors.indigo, size: 30),
               const SizedBox(width: 8),
               Text('Before the AI responds…',
                   style: _m(size: 13, weight: FontWeight.w800, color: cs.onSurface)),
@@ -2678,7 +2601,7 @@ class _PredictionPrompt extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             'Do you think this claim is true or false?',
-            style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55), height: 1.4),
+            style: _m(size: 12, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7), height: 1.4),
           ),
           const SizedBox(height: 12),
           Row(
@@ -2689,14 +2612,14 @@ class _PredictionPrompt extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 11),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFEFFFF5),
+                      color: _kAccent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: _kAccent),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text('✅', style: TextStyle(fontSize: 14)),
+                        const Icon(Icons.check_circle_rounded, size: 18, color: _kAccent),
                         const SizedBox(width: 6),
                         Text('Likely True',
                             style: _m(size: 12, weight: FontWeight.w700, color: _kAccent)),
@@ -2712,14 +2635,14 @@ class _PredictionPrompt extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 11),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFEDE8),
+                      color: _kDanger.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: _kDanger),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text('⚠️', style: TextStyle(fontSize: 14)),
+                        const Icon(Icons.warning_amber_rounded, size: 18, color: _kDanger),
                         const SizedBox(width: 6),
                         Text('Likely False',
                             style: _m(size: 12, weight: FontWeight.w700, color: _kDanger)),
@@ -2733,7 +2656,7 @@ class _PredictionPrompt extends StatelessWidget {
           const SizedBox(height: 8),
           Center(
             child: Text('Helps track your critical-thinking growth',
-                style: _m(size: 10, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.55))),
+                style: _m(size: 11, weight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.7))),
           ),
         ],
       ),
@@ -2752,13 +2675,13 @@ class _PredictionLocked extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isTrue ? const Color(0xFFEFFFF5) : const Color(0xFFFFEDE8),
+        color: (isTrue ? _kAccent : _kDanger).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: isTrue ? _kAccent : _kDanger),
       ),
       child: Row(
         children: [
-          Text(isTrue ? '✅' : '⚠️', style: const TextStyle(fontSize: 16)),
+          Icon(isTrue ? Icons.check_circle_rounded : Icons.warning_amber_rounded, size: 22, color: isTrue ? _kAccent : _kDanger),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -2784,14 +2707,14 @@ class _PredictionResultChip extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: correct ? const Color(0xFFEFFFF5) : const Color(0xFFFFF7ED),
+        color: (correct ? _kAccent : AppColors.amber).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
             color: correct ? _kAccent : const Color(0xFFF59E0B)),
       ),
       child: Row(
         children: [
-          Text(correct ? '🎉' : '💡', style: const TextStyle(fontSize: 18)),
+          IconBadge(icon: correct ? Icons.celebration_rounded : Icons.lightbulb_rounded, color: correct ? _kAccent : AppColors.amber, size: 34),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -2802,7 +2725,7 @@ class _PredictionResultChip extends StatelessWidget {
                   style: _m(
                       size: 13,
                       weight: FontWeight.w800,
-                      color: correct ? _kAccent : const Color(0xFFD97706)),
+                      color: correct ? _kAccent : AppColors.amber),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -2812,9 +2735,7 @@ class _PredictionResultChip extends StatelessWidget {
                   style: _m(
                       size: 11,
                       weight: FontWeight.w500,
-                      color: correct
-                          ? const Color(0xFF15803D)
-                          : const Color(0xFF92400E),
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.75),
                       height: 1.4),
                 ),
               ],
@@ -2833,23 +2754,24 @@ class _TipCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
+        color: AppColors.sky.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.sky.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          const Text('💡', style: TextStyle(fontSize: 18)),
+          const IconBadge(icon: Icons.lightbulb_rounded, color: AppColors.sky, size: 34),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               hasResults
                   ? 'Try editing the claim above and tap Explain Why again to compare results.'
                   : 'Credexa checks for emotional language, missing sources, and known misinformation patterns.',
-              style: _m(size: 12, weight: FontWeight.w600, color: const Color(0xFF1E40AF), height: 1.55),
+              style: _m(size: 12, weight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.85), height: 1.55),
             ),
           ),
         ],

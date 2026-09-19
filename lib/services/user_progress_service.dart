@@ -1,3 +1,4 @@
+import 'achievement_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -135,8 +136,18 @@ class UserProgressService {
     await p.setInt(_k('pc'), s.predictionsCorrect);
     await p.setInt(_k('qa'), s.questsAnswered);
     await p.setInt(_k('qc'), s.questsCorrect);
+    final before = levelFor(stats.value.maturityPoints);
     stats.value = s;
     unawaited(pushToCloud(s));
+    final after = levelFor(s.maturityPoints);
+    if (kMaturityLevels.indexOf(after) > kMaturityLevels.indexOf(before)) {
+      AchievementService.announce(Achievement(
+        kind: AchievementKind.level,
+        emoji: after.emoji,
+        title: after.title,
+        subtitle: 'You reached a new Media Maturity level',
+      ));
+    }
   }
 
   // ── Cloud sync (users/{uid}.progress) ────────────────────────────────────────

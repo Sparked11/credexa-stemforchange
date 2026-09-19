@@ -7,6 +7,7 @@ import 'package:flutter/services.dart'; // ignore: unnecessary_import
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'models/news_article.dart';
+import 'news_article_page.dart';
 import 'services/news_service.dart';
 import 'services/share_service.dart';
 import 'services/shared_content_router.dart';
@@ -25,6 +26,15 @@ import 'profile_page.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 import 'services/quest_service.dart';
+import 'theme/app_tokens.dart';
+import 'widgets/app_widgets.dart';
+import 'widgets/hero_3d_stage.dart';
+import 'widgets/adaptive_chrome.dart';
+import 'widgets/scroll_journey.dart';
+import 'widgets/glass_button.dart';
+import 'widgets/maturity_levels_sheet.dart';
+import 'widgets/achievement_toast.dart';
+import 'services/achievement_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  APP THEME SERVICE  — global dark / light mode with persistence
@@ -50,14 +60,34 @@ class AppThemeService {
 
   static bool get isDark => mode.value == ThemeMode.dark;
 
+  static final _buttonShape =
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md));
+
   static ThemeData get lightTheme => ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF1E293B),
           brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+        scaffoldBackgroundColor: AppColors.slate100,
         fontFamily: 'Montserrat',
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.slate100,
+          foregroundColor: AppColors.slate800,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(shape: _buttonShape),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(shape: _buttonShape),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm)),
+        ),
       );
 
   static ThemeData get darkTheme => ThemeData(
@@ -75,6 +105,19 @@ class AppThemeService {
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF0F172A),
           foregroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(shape: _buttonShape),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(shape: _buttonShape),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm)),
         ),
       );
 }
@@ -164,10 +207,7 @@ class _MyAppState extends State<MyApp> {
         builder: (ctx, user, _) {
           // Still reading prefs — show blank splash to avoid flicker.
           if (_hasSeenOnboarding == null) {
-            return Scaffold(
-              backgroundColor: Theme.of(ctx).scaffoldBackgroundColor,
-              body: const SizedBox.shrink(),
-            );
+            return const _BrandSplash();
           }
           // First launch → show onboarding before auth.
           if (!_hasSeenOnboarding!) {
@@ -203,30 +243,33 @@ class MainApp extends StatefulWidget {
 class _MainAppState extends State<MainApp>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pageTransitionController;
-  late AnimationController _overlayController;
   late AnimationController _questSlideCtrl;
+  final ChromeController _chrome = ChromeController();
+  StreamSubscription<Achievement>? _achievementSub;
+  static const double _navHeight = 64;
   String? _moreSubPage;
-  bool   _showOverlay    = false;
   bool   _showDailyQuest = false;
   bool   _questMinimized = false;
   bool            _showCredexaAd  = false;
   DateTime?       _lastAdShown;
   Map<String, dynamic>? _dailyQuestData;
-  _TransitionInfo _transitionInfo = const _TransitionInfo(
-    label: 'Home', icon: Icons.home_rounded, color: Color(0xFF22C55E));
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _achievementSub = AchievementService.stream.listen((a) {
+      if (!mounted) return;
+      AchievementToaster.enqueue(
+        context,
+        a,
+        onView: () => ProfileService.openProfile?.call(context),
+      );
+    });
     _pageTransitionController = AnimationController(
-      duration: const Duration(milliseconds: 320),
+      duration: const Duration(milliseconds: 220),
       vsync: this,
     )..forward();
-    _overlayController = AnimationController(
-      duration: const Duration(milliseconds: 520),
-      vsync: this,
-    );
     _questSlideCtrl = AnimationController(
       duration: const Duration(milliseconds: 480),
       vsync: this,
@@ -273,6 +316,7 @@ class _MainAppState extends State<MainApp>
 
   // X button: slide the banner out but keep the quest alive as a mini chip.
   Future<void> _minimizeQuest() async {
+    HapticFeedback.lightImpact();
     await _questSlideCtrl.reverse();
     if (mounted) setState(() => _questMinimized = true);
     // Do NOT call markQuestSeen — quest remains accessible all day.
@@ -286,6 +330,7 @@ class _MainAppState extends State<MainApp>
 
   // Show the Credexa+ ad with a 3-minute cooldown between showings.
   void _maybeShowAd({int delayMs = 1000}) {
+    if (!kShowPromoAd) return;
     final now = DateTime.now();
     if (_lastAdShown != null && now.difference(_lastAdShown!).inMinutes < 3) return;
     Future.delayed(Duration(milliseconds: delayMs), () {
@@ -306,11 +351,8 @@ class _MainAppState extends State<MainApp>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.selectedTab != widget.selectedTab) {
       _moreSubPage = null;
-      _triggerTransition(
-        widget.selectedTab.label,
-        widget.selectedTab.icon,
-        _tabColor(widget.selectedTab),
-      );
+      _resetChromeAfterFrame();
+      _triggerTransition();
       // Show ad after every tab switch (user just finished using a feature).
       _maybeShowAd(delayMs: 1500);
     }
@@ -320,55 +362,18 @@ class _MainAppState extends State<MainApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pageTransitionController.dispose();
-    _overlayController.dispose();
     _questSlideCtrl.dispose();
+    _achievementSub?.cancel();
+    _chrome.dispose();
     super.dispose();
   }
 
   // ── Transition helpers ───────────────────────────────────────────────────────
 
-  Color _tabColor(NavigationTab tab) {
-    switch (tab) {
-      case NavigationTab.home:      return const Color(0xFF22C55E);
-      case NavigationTab.explain:   return const Color(0xFF6366F1);
-      case NavigationTab.debiaseed: return const Color(0xFF22C55E);
-      case NavigationTab.newsFeed:  return const Color(0xFF0EA5E9);
-      case NavigationTab.more:      return const Color(0xFF1E293B);
-    }
-  }
-
-  (String, IconData, Color) _moreItemMeta(String item) {
-    switch (item) {
-      case 'election':
-        return ('Election Integrity', Icons.how_to_vote_rounded, const Color(0xFF1D4ED8));
-      case 'learn':
-        return ('Community Hub', Icons.forum_rounded, const Color(0xFF6366F1));
-      default:
-        return ('More', Icons.more_horiz_rounded, const Color(0xFF1E293B));
-    }
-  }
-
-  Future<void> _triggerTransition(String label, IconData icon, Color color) async {
+  void _triggerTransition() {
     if (!mounted) return;
-    setState(() {
-      _showOverlay   = true;
-      _transitionInfo = _TransitionInfo(label: label, icon: icon, color: color);
-    });
-    _overlayController.reset();
-    _pageTransitionController.reset();
-
-    // Haptic rhythm: tap·beat·beat·land
-    Future.delayed(const Duration(milliseconds: 80),  () { if (mounted) HapticFeedback.lightImpact(); });
-    Future.delayed(const Duration(milliseconds: 210), () { if (mounted) HapticFeedback.mediumImpact(); });
-    Future.delayed(const Duration(milliseconds: 270), () { if (mounted) HapticFeedback.mediumImpact(); });
-    Future.delayed(const Duration(milliseconds: 430), () { if (mounted) HapticFeedback.lightImpact(); });
-
-    // Overlay plays; page entrance starts at the tail of the overlay
-    _overlayController.forward();
-    await Future.delayed(const Duration(milliseconds: 340));
-    if (mounted) _pageTransitionController.forward();
-    await _overlayController.forward();
-    if (mounted) setState(() => _showOverlay = false);
+    _pageTransitionController.forward(from: 0);
+    HapticFeedback.selectionClick();
   }
 
   // ── Content ──────────────────────────────────────────────────────────────────
@@ -409,9 +414,9 @@ class _MainAppState extends State<MainApp>
       )).then((_) => _maybeShowAd(delayMs: 800));
       return;
     }
-    final (label, icon, color) = _moreItemMeta(item);
     setState(() => _moreSubPage = item);
-    _triggerTransition(label, icon, color);
+    _resetChromeAfterFrame();
+    _triggerTransition();
   }
 
   Widget _buildPage() {
@@ -443,69 +448,160 @@ class _MainAppState extends State<MainApp>
     }
   }
 
+  void _resetChromeAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _chrome.reset();
+    });
+  }
+
+  bool _onScrollNotification(ScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical || n.depth != 0) return false;
+    if (n is ScrollUpdateNotification) {
+      _chrome.onScroll(n.metrics.pixels, n.scrollDelta ?? 0);
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
+    final mq = MediaQuery.of(context);
+    final safeBottom = mq.padding.bottom;
+    final navBottom = safeBottom > 0 ? safeBottom - 8 : 14.0;
+    final navSpace = _navHeight + navBottom + 14;
+    final onHomeTab = _moreSubPage == null &&
+        (widget.selectedTab == NavigationTab.home ||
+            widget.selectedTab == NavigationTab.more);
+    final overlayPage = onHomeTab || (_moreSubPage == null &&
+        widget.selectedTab == NavigationTab.newsFeed);
+    final scaffoldBg = Theme.of(context).scaffoldBackgroundColor;
+    final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
+
+    return ChromeScope(
+      controller: _chrome,
+      child: Scaffold(
+        backgroundColor: scaffoldBg,
+        body: Stack(
           children: [
-            FadeTransition(
-              opacity: _pageTransitionController,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.96, end: 1.0).animate(
-                  CurvedAnimation(
-                      parent: _pageTransitionController,
-                      curve: Curves.easeOutCubic),
-                ),
-                child: _buildPage(),
+            // Status-bar strip: tinted dark while the hero is behind it so the
+            // hero flows seamlessly to the top edge.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: mq.padding.top,
+              child: ListenableBuilder(
+                listenable: _chrome,
+                builder: (context, _) {
+                  final dark = onHomeTab ? _chrome.topDark : 0.0;
+                  return AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: (dark > 0.5 || isDarkTheme)
+                        ? SystemUiOverlayStyle.light
+                        : SystemUiOverlayStyle.dark,
+                    child: ColoredBox(
+                      color: Color.lerp(
+                          scaffoldBg, const Color(0xFF03050B), dark)!,
+                    ),
+                  );
+                },
               ),
             ),
-            if (_showOverlay)
-              _PageTransitionOverlay(
-                controller: _overlayController,
-                info: _transitionInfo,
-              ),
-            if (_showDailyQuest && _dailyQuestData != null && !_questMinimized)
-              _DailyQuestBanner(
-                questData: _dailyQuestData!,
-                slideCtrl: _questSlideCtrl,
-                onMinimize: _minimizeQuest,
-                onAnswered: (bool correct) async {
-                  await UserProgressService.recordQuestResult(correct: correct);
-                  await _dismissDailyQuest();
-                },
-              ),
-            if (_showDailyQuest && _questMinimized)
-              Positioned(
-                top: 12,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: _QuestMiniChip(onTap: _expandQuest),
-                ),
-              ),
-            if (_showCredexaAd)
-              _CredexaPlusAd(
-                onDismiss: () {
-                  if (mounted) setState(() => _showCredexaAd = false);
-                },
-              ),
+            SafeArea(
+              bottom: false,
+              child: LayoutBuilder(builder: (context, box) {
+                return Stack(
+                  children: [
+                    NotificationListener<ScrollNotification>(
+                      onNotification: _onScrollNotification,
+                      child: Padding(
+                        padding:
+                            EdgeInsets.only(bottom: overlayPage ? 0 : navSpace),
+                        child: FadeTransition(
+                          opacity: _pageTransitionController,
+                          child: ScaleTransition(
+                            scale: Tween<double>(begin: 0.96, end: 1.0).animate(
+                              CurvedAnimation(
+                                  parent: _pageTransitionController,
+                                  curve: Curves.easeOutCubic),
+                            ),
+                            child: _buildPage(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_showDailyQuest &&
+                        _dailyQuestData != null &&
+                        !_questMinimized)
+                      _DailyQuestBanner(
+                        questData: _dailyQuestData!,
+                        slideCtrl: _questSlideCtrl,
+                        onMinimize: _minimizeQuest,
+                        onAnswered: (bool correct) async {
+                          await UserProgressService.recordQuestResult(
+                              correct: correct);
+                          await _dismissDailyQuest();
+                        },
+                      ),
+                    if (_showDailyQuest && _questMinimized)
+                      _QuestFloatingBadge(
+                          onTap: _expandQuest, bottomInset: navSpace),
+                    if (_showCredexaAd)
+                      _CredexaPlusAd(
+                        onDismiss: () {
+                          if (mounted) setState(() => _showCredexaAd = false);
+                        },
+                      ),
+                    Positioned(
+                      left: 20,
+                      right: 20,
+                      bottom: navBottom,
+                      child: ListenableBuilder(
+                        listenable: _chrome,
+                        builder: (context, _) {
+                          var dark = 0.0;
+                          if (onHomeTab && _chrome.heroHeight > 0) {
+                            final heroBottom =
+                                _chrome.heroHeight - _chrome.offset;
+                            final navTop =
+                                box.maxHeight - navBottom - _navHeight;
+                            dark = ((heroBottom - navTop) / 40).clamp(0.0, 1.0);
+                          }
+                          final hidden = overlayPage && _chrome.navHidden;
+                          return AnimatedSlide(
+                            duration: const Duration(milliseconds: 260),
+                            curve: Curves.easeOutCubic,
+                            offset: hidden
+                                ? Offset(0, (navSpace + 24) / _navHeight)
+                                : Offset.zero,
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 200),
+                              opacity: hidden ? 0 : 1,
+                              child: _BottomNavBar(
+                                selectedTab: widget.selectedTab,
+                                dark: dark,
+                                onTabChanged: (tab) {
+                                  // Always clear any active More sub-page so
+                                  // tapping Home while on a More sub-page
+                                  // actually navigates back.
+                                  if (_moreSubPage != null) {
+                                    setState(() => _moreSubPage = null);
+                                    _resetChromeAfterFrame();
+                                  }
+                                  widget.onTabChanged(tab);
+                                },
+                                onMoreItemSelected: _selectMoreItem,
+                                moreIsActive: _moreSubPage != null,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
           ],
         ),
-      ),
-      bottomNavigationBar: _BottomNavBar(
-        selectedTab: widget.selectedTab,
-        onTabChanged: (tab) {
-          // Always clear any active More sub-page so tapping Home while on
-          // a More sub-page actually navigates back, even when selectedTab
-          // hasn't changed (e.g. Home was already the last real tab).
-          if (_moreSubPage != null) setState(() => _moreSubPage = null);
-          widget.onTabChanged(tab);
-        },
-        onMoreItemSelected: _selectMoreItem,
-        moreIsActive: _moreSubPage != null,
       ),
     );
   }
@@ -531,15 +627,10 @@ class HomeDashboardPage extends StatefulWidget {
 class _HomeDashboardPageState extends State<HomeDashboardPage>
     with TickerProviderStateMixin {
 
-  static const _accent   = Color(0xFF22C55E);
-
   // Staggered entrance animation — runs once on first build.
   late final AnimationController _entranceCtrl;
   // Continuous pulse ring behind the logo.
   late final AnimationController _pulseCtrl;
-  // Features carousel controller + current page index.
-  late final PageController _featuresPageCtrl;
-  int _featuresPage = 0;
   bool _maturityExpanded = true;
 
   @override
@@ -553,14 +644,12 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       duration: const Duration(milliseconds: 2500),
       vsync: this,
     )..repeat();
-    _featuresPageCtrl = PageController();
   }
 
   @override
   void dispose() {
     _entranceCtrl.dispose();
     _pulseCtrl.dispose();
-    _featuresPageCtrl.dispose();
     super.dispose();
   }
 
@@ -579,22 +668,86 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
     );
   }
 
+  List<JourneyStep> _journeySteps() => [
+        JourneyStep(
+          icon: Icons.videocam_rounded,
+          color: const Color(0xFF0EA5E9),
+          title: 'Spot it',
+          body:
+              'Point Trust Lens at any screen and flagged claims light up in real time.',
+          cta: 'Open Trust Lens',
+          onTap: () => widget.onNavigateMore?.call('trust_lens'),
+        ),
+        JourneyStep(
+          icon: Icons.fact_check_rounded,
+          color: const Color(0xFF6366F1),
+          title: 'Check it',
+          body:
+              'Paste or snap a claim and a 3-model AI council explains what holds up and what does not.',
+          cta: 'Explain a claim',
+          onTap: () => widget.onNavigate(NavigationTab.explain),
+        ),
+        JourneyStep(
+          icon: Icons.tune_rounded,
+          color: const Color(0xFF14B8A6),
+          title: 'Reframe it',
+          body:
+              'De-Bias rewrites loaded language into a neutral version so you see the facts.',
+          cta: 'Try De-Bias',
+          onTap: () => widget.onNavigate(NavigationTab.debiaseed),
+        ),
+        JourneyStep(
+          icon: Icons.newspaper_rounded,
+          color: const Color(0xFFF59E0B),
+          title: 'Read wider',
+          body:
+              'Browse the news feed and follow each story back to the publisher to verify it.',
+          cta: 'Open the news feed',
+          onTap: () => widget.onNavigate(NavigationTab.newsFeed),
+        ),
+        JourneyStep(
+          icon: Icons.forum_rounded,
+          color: const Color(0xFF22C55E),
+          title: 'Talk it through',
+          body:
+              'Ask "Is this real?" in the community and get anonymous, fact-checked answers.',
+          cta: 'Join the Community Hub',
+          onTap: () => widget.onNavigateMore?.call('learn'),
+        ),
+      ];
+
   @override
   Widget build(BuildContext context) {
+    final bottomSpace = MediaQuery.of(context).padding.bottom + 110;
     return Stack(
       children: [
         CustomScrollView(
           slivers: [
-            const SliverToBoxAdapter(child: SizedBox(height: 64)),
-            SliverToBoxAdapter(child: _staggered(_buildHero(), 0.0, 0.4)),
-            SliverToBoxAdapter(child: _staggered(_buildInsightsCarousel(), 0.08, 0.45)),
-            SliverToBoxAdapter(child: _staggered(_buildMaturityTracker(), 0.15, 0.5)),
-            SliverToBoxAdapter(child: _staggered(_buildStreak(), 0.2, 0.6)),
             SliverToBoxAdapter(
-                child: _staggered(_buildFeatures(context), 0.4, 0.8)),
-            SliverToBoxAdapter(child: _staggered(_buildMission(), 0.4, 0.8)),
-            SliverToBoxAdapter(child: _staggered(_buildStat(), 0.6, 1.0)),
-            const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              child: HeroHeightReporter(
+                child: _staggered(
+                  Hero3DStage(
+                    topInset: 64,
+                    onCheckClaim: () =>
+                        widget.onNavigate(NavigationTab.explain),
+                    onOpenTrustLens: () =>
+                        widget.onNavigateMore?.call('trust_lens'),
+                  ),
+                  0.0,
+                  0.4,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            SliverToBoxAdapter(child: ScrollReveal(child: _buildMaturityTracker())),
+            SliverToBoxAdapter(child: ScrollReveal(child: _buildStreak())),
+            SliverToBoxAdapter(child: ScrollJourney(steps: _journeySteps())),
+            const SliverToBoxAdapter(child: SizedBox(height: 28)),
+            SliverToBoxAdapter(
+                child: ScrollReveal(child: _buildFeatures(context))),
+            SliverToBoxAdapter(child: ScrollReveal(child: _buildMission())),
+            SliverToBoxAdapter(child: ScrollReveal(child: _buildStat())),
+            SliverToBoxAdapter(child: SizedBox(height: bottomSpace)),
           ],
         ),
         Positioned(top: 0, left: 0, right: 0, child: _buildNavbar()),
@@ -646,8 +799,16 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                   behavior: HitTestBehavior.opaque,
                   child: Row(
                     children: [
-                      Text(lvl.emoji,
-                          style: const TextStyle(fontSize: 28)),
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.workspace_premium_rounded,
+                            color: Colors.white, size: 24),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -657,9 +818,9 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                               'MEDIA MATURITY',
                               style: TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 9,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w800,
-                                color: Color(0xFFBBF7D0),
+                                color: Color(0xFFE0E7FF),
                                 letterSpacing: 1.2,
                               ),
                             ),
@@ -692,7 +853,16 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => showMaturityLevels(context),
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(Icons.info_outline_rounded,
+                              color: Colors.white, size: 22),
+                        ),
+                      ),
                       AnimatedRotation(
                         turns: _maturityExpanded ? 0.0 : 0.5,
                         duration: const Duration(milliseconds: 320),
@@ -724,7 +894,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                                     Colors.white.withValues(alpha: 0.25),
                                 valueColor:
                                     const AlwaysStoppedAnimation<Color>(
-                                        Color(0xFF4ADE80)),
+                                        Colors.white),
                               ),
                             ),
                             const SizedBox(height: 6),
@@ -733,9 +903,9 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                                 '${lvl.pointsToNext(s.maturityPoints)} pts to ${nextLvl.title}',
                                 style: const TextStyle(
                                   fontFamily: 'Montserrat',
-                                  fontSize: 10,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFFBBF7D0),
+                                  color: Color(0xFFE0E7FF),
                                 ),
                               ),
                             const SizedBox(height: 16),
@@ -743,64 +913,40 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
                             // ── Stats row ──
                             Row(
                               children: [
-                                _matStat('🎯', 'Accuracy', pct),
+                                _matStat(Icons.gps_fixed_rounded, 'Accuracy', pct),
                                 _matDivider(),
-                                _matStat('📚', 'Quests', '${s.questsAnswered}'),
+                                _matStat(Icons.menu_book_rounded, 'Quests',
+                                    '${s.questsAnswered}'),
                                 _matDivider(),
-                                _matStat(
-                                    '🔍', 'Predictions', '${s.predictionsTotal}'),
+                                _matStat(Icons.psychology_alt_rounded,
+                                    'Predictions', '${s.predictionsTotal}'),
                               ],
                             ),
                             const SizedBox(height: 16),
 
-                            // ── Core identity statement ──
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'What Credexa is, in one sentence:',
-                                    style: TextStyle(
-                                      fontFamily: 'Montserrat',
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFFBBF7D0),
-                                      letterSpacing: 0.8,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  const Text(
-                                    '"An AI-powered platform that teaches you to evaluate information critically — not just gives you answers."',
-                                    style: TextStyle(
-                                      fontFamily: 'Montserrat',
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                      height: 1.5,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
+                            // ── Growth message ──
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.trending_up_rounded,
+                                    color: Colors.white, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
                                     s.predictionsTotal >= 3
-                                        ? '📈  Your prediction accuracy is $pct — proof that critical thinking can be learned.'
-                                        : '📈  Answer daily quests and check claims to build evidence of your growth.',
+                                        ? 'Your prediction accuracy is $pct, proof that critical thinking can be learned.'
+                                        : 'Answer daily quests and check claims to build evidence of your growth.',
                                     style: TextStyle(
                                       fontFamily: 'Montserrat',
-                                      fontSize: 10,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w500,
                                       color:
-                                          Colors.white.withValues(alpha: 0.8),
+                                          Colors.white.withValues(alpha: 0.9),
                                       height: 1.45,
                                     ),
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ],
                         )
@@ -814,10 +960,10 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
     );
   }
 
-  Widget _matStat(String emoji, String label, String value) => Expanded(
+  Widget _matStat(IconData icon, String label, String value) => Expanded(
         child: Column(
           children: [
-            Text(emoji, style: const TextStyle(fontSize: 18)),
+            Icon(icon, color: Colors.white, size: 20),
             const SizedBox(height: 4),
             Text(
               value,
@@ -832,9 +978,9 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
               label,
               style: TextStyle(
                 fontFamily: 'Montserrat',
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.white.withValues(alpha: 0.7),
+                color: Colors.white.withValues(alpha: 0.85),
               ),
             ),
           ],
@@ -862,183 +1008,118 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
     );
   }
 
-  Widget _buildNavbar() {
-    return Container(
-      height: 64,
-      color: Theme.of(context).scaffoldBackgroundColor,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: kDebugMode ? () async {
-              final nav = Navigator.of(context);
-              final p = await SharedPreferences.getInstance();
-              await p.remove('hasSeenOnboarding');
-              HapticFeedback.mediumImpact();
-              nav.push(MaterialPageRoute(
-                builder: (_) => OnboardingPage(onComplete: nav.pop),
-              ));
-            } : null,
-            child: SizedBox(
-              height: 62,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  _PulseRing(controller: _pulseCtrl),
-                  Image.asset('assets/logomain.png',
-                      height: 62, fit: BoxFit.contain),
-                ],
-              ),
-            ),
-          ),
-          const Spacer(),
-          ValueListenableBuilder<ThemeMode>(
-            valueListenable: AppThemeService.mode,
-            builder: (_, mode, _) {
-              final isDark = mode == ThemeMode.dark;
-              return GestureDetector(
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  AppThemeService.toggle();
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeInOut,
+  Widget _dashboardLogo(double dark) {
+    final useBadge =
+        dark > 0.5 || Theme.of(context).brightness == Brightness.dark;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      child: useBadge
+          ? Row(
+              key: const ValueKey('badge'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
                   width: 40,
                   height: 40,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF334155)
-                        : const Color(0xFFE2E8F0),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
                     shape: BoxShape.circle,
                   ),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    transitionBuilder: (child, anim) => RotationTransition(
-                      turns: anim,
-                      child: FadeTransition(opacity: anim, child: child),
-                    ),
-                    child: Icon(
-                      isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
-                      key: ValueKey(isDark),
-                      size: 18,
-                      color: isDark
-                          ? const Color(0xFFFBBF24)
-                          : const Color(0xFF64748B),
-                    ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Image.asset('assets/logomain.png',
+                        fit: BoxFit.contain),
                   ),
                 ),
-              );
-            },
-          ),
-          const ProfileIcon(),
-        ],
-      ),
+                const SizedBox(width: 10),
+                const Text(
+                  'Credexa',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            )
+          : Stack(
+              key: const ValueKey('logo'),
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                _PulseRing(controller: _pulseCtrl),
+                Image.asset('assets/logomain.png',
+                    height: 52, fit: BoxFit.contain),
+              ],
+            ),
     );
   }
 
-  // ── Social posts carousel ────────────────────────────────────────────────────
-  Widget _buildInsightsCarousel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-          child: Row(
-            children: [
-              Container(
-                width: 4, height: 16,
-                decoration: BoxDecoration(
-                  color: _accent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'WHAT CRITICAL THINKERS SPOT FIRST',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 9,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 1.1,
-                ),
-              ),
-            ],
-          ),
+  Widget _buildNavbar() {
+    return GlassTopBar(
+      builder: (context, dark) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          children: [
+            GestureDetector(
+              onTap: kDebugMode ? () async {
+                final nav = Navigator.of(context);
+                final p = await SharedPreferences.getInstance();
+                await p.remove('hasSeenOnboarding');
+                HapticFeedback.mediumImpact();
+                nav.push(MaterialPageRoute(
+                  builder: (_) => OnboardingPage(onComplete: nav.pop),
+                ));
+              } : null,
+              child: SizedBox(height: 52, child: _dashboardLogo(dark)),
+            ),
+            const Spacer(),
+            ValueListenableBuilder<ThemeMode>(
+              valueListenable: AppThemeService.mode,
+              builder: (_, mode, _) {
+                final isDark = mode == ThemeMode.dark;
+                final base =
+                    isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+                final iconBase = isDark
+                    ? const Color(0xFFFBBF24)
+                    : const Color(0xFF64748B);
+                return GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    AppThemeService.toggle();
+                  },
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: Color.lerp(
+                          base, Colors.white.withValues(alpha: 0.16), dark),
+                      shape: BoxShape.circle,
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: (child, anim) => RotationTransition(
+                        turns: anim,
+                        child: FadeTransition(opacity: anim, child: child),
+                      ),
+                      child: Icon(
+                        isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
+                        key: ValueKey(isDark),
+                        size: 18,
+                        color: Color.lerp(
+                            iconBase, const Color(0xFFFBBF24), dark),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const ProfileIcon(),
+          ],
         ),
-        const _SocialPostsMarquee(),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
-          child: Row(
-            children: const [
-              Icon(Icons.touch_app_rounded, size: 12, color: Color(0xFF94A3B8)),
-              SizedBox(width: 5),
-              Text(
-                'Tap to pause · Go be Media Mature',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF94A3B8),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHero() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: _accent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(100),
-            ),
-            child: const Text(
-              'CREDEXA · MEDIA LITERACY PLATFORM',
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF22C55E),
-                letterSpacing: 1.1,
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Fight Misinformation.\nThink Critically.',
-            style: TextStyle(
-              fontFamily: 'Montserrat',
-              fontSize: 30,
-              fontWeight: FontWeight.w900,
-              color: Theme.of(context).colorScheme.onSurface,
-              height: 1.15,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Your partner in understanding, identifying, and combating misinformation — aligned with UN SDG 16.',
-            style: TextStyle(
-              fontFamily: 'Montserrat',
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
-              height: 1.6,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1088,149 +1169,130 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       ],
     ];
 
-    void tapFeature(int page, int index) {
+    final items = [...pages[0], ...pages[1]];
+
+    void tapFeature(int index) {
       HapticFeedback.lightImpact();
-      if (page == 0) {
-        switch (index) {
-          case 0: widget.onNavigate(NavigationTab.explain);
-          case 1: widget.onNavigate(NavigationTab.debiaseed);
-          case 2: widget.onNavigate(NavigationTab.newsFeed);
-          case 3: widget.onNavigateMore?.call('learn');
-        }
-      } else {
-        switch (index) {
-          case 0: widget.onNavigateMore?.call('election');
-          case 1: widget.onNavigateMore?.call('trust_lens');
-        }
+      switch (index) {
+        case 0: widget.onNavigate(NavigationTab.explain);
+        case 1: widget.onNavigate(NavigationTab.debiaseed);
+        case 2: widget.onNavigate(NavigationTab.newsFeed);
+        case 3: widget.onNavigateMore?.call('learn');
+        case 4: widget.onNavigateMore?.call('election');
+        case 5: widget.onNavigateMore?.call('trust_lens');
       }
     }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                'Explore Features',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const Spacer(),
-              // Page indicator dots
-              Row(
-                children: List.generate(pages.length, (i) {
-                  final active = _featuresPage == i;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut,
-                    margin: EdgeInsets.only(left: i == 0 ? 0 : 6),
-                    width: active ? 20 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: active ? _accent : const Color(0xFFCBD5E1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  );
-                }),
-              ),
-            ],
+          Text(
+            'Explore Features',
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: cs.onSurface,
+            ),
           ),
           const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final w = constraints.maxWidth;
-              // Match the 2-column grid geometry to compute a stable height.
-              final cellW = (w - 12) / 2;
-              final cellH = cellW / 1.05;
-              final gridH = 2 * cellH + 12;
-              return SizedBox(
-                height: gridH,
-                child: PageView.builder(
-                  controller: _featuresPageCtrl,
-                  onPageChanged: (i) => setState(() => _featuresPage = i),
-                  itemCount: pages.length,
-                  itemBuilder: (context, pageIndex) {
-                    final items = pages[pageIndex];
-                    return GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 1.05,
-                      children: List.generate(items.length, (i) {
-                        final f = items[i];
-                        return GestureDetector(
-                          onTap: () => tapFeature(pageIndex, i),
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).brightness == Brightness.dark
-                                  ? const Color(0xFF1E293B)
-                                  : Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(
-                                      alpha: Theme.of(context).brightness == Brightness.dark
-                                          ? 0.25
-                                          : 0.05),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  width: 42,
-                                  height: 42,
-                                  decoration: BoxDecoration(
-                                    color: f.color.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Icon(f.icon, color: f.color, size: 22),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  f.title,
-                                  style: TextStyle(
-                                    fontFamily: 'Montserrat',
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w800,
-                                    color: Theme.of(context).colorScheme.onSurface,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  f.desc,
-                                  style: TextStyle(
-                                    fontFamily: 'Montserrat',
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
-                                    height: 1.4,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 1.05,
+            children: List.generate(items.length, (i) {
+              final f = items[i];
+              return TiltCard(
+                onTap: () => tapFeature(i),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: isDark
+                          ? [const Color(0xFF273449), AppColors.slate800]
+                          : [Colors.white, const Color(0xFFF1F5F9)],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: isDark ? 0.08 : 0.9),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: f.color.withValues(alpha: isDark ? 0.18 : 0.14),
+                        blurRadius: 24,
+                        offset: const Offset(0, 12),
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              f.color.withValues(alpha: 0.9),
+                              f.color.withValues(alpha: 0.6),
+                            ],
                           ),
-                        );
-                      }),
-                    );
-                  },
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
+                              color: f.color.withValues(alpha: 0.45),
+                              blurRadius: 12,
+                              offset: const Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                        child: Icon(f.icon, color: Colors.white, size: 23),
+                      ),
+                      const Spacer(),
+                      Text(
+                        f.title,
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        f.desc,
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: cs.onSurface.withValues(alpha: 0.72),
+                          height: 1.4,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
               );
-            },
+            }),
           ),
         ],
       ),
@@ -1262,7 +1324,10 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
           children: [
             Row(
               children: [
-                const Text('🕊️', style: TextStyle(fontSize: 28)),
+                const IconBadge(
+                    icon: Icons.public_rounded,
+                    color: Color(0xFF22C55E),
+                    size: 40),
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
@@ -1358,7 +1423,10 @@ class _ProblemDefinitionPage extends StatelessWidget {
             leading: IconButton(
               icon: const Icon(Icons.arrow_back_ios_new_rounded,
                   color: Colors.white, size: 20),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                Navigator.of(context).pop();
+              },
             ),
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
@@ -1386,7 +1454,7 @@ class _ProblemDefinitionPage extends StatelessWidget {
                           child: const Text('UN SDG GOAL 16',
                               style: TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 10,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w800,
                                 color: Color(0xFF22C55E),
                                 letterSpacing: 1.1,
@@ -1429,7 +1497,8 @@ class _ProblemDefinitionPage extends StatelessWidget {
                 children: [
                   // ── The Problem ───────────────────────────────────────────
                   _probSection(
-                    emoji: '🌐',
+                    icon: Icons.public_rounded,
+                    color: const Color(0xFF0EA5E9),
                     title: 'The Community Problem',
                     body:
                         'Misinformation spreads faster than ever — and most people '
@@ -1499,7 +1568,8 @@ class _ProblemDefinitionPage extends StatelessWidget {
 
                   // ── Who is affected ───────────────────────────────────────
                   _probSection(
-                    emoji: '👥',
+                    icon: Icons.groups_rounded,
+                    color: const Color(0xFF6366F1),
                     title: 'Who Is Affected',
                     body:
                         'Teenagers and young adults are the most vulnerable — they '
@@ -1512,7 +1582,8 @@ class _ProblemDefinitionPage extends StatelessWidget {
 
                   // ── Why it matters ────────────────────────────────────────
                   _probSection(
-                    emoji: '⚖️',
+                    icon: Icons.balance_rounded,
+                    color: const Color(0xFFF59E0B),
                     title: 'Why It Matters',
                     body:
                         'UN SDG Goal 16 calls for peaceful, just, and inclusive '
@@ -1571,49 +1642,56 @@ class _ProblemDefinitionPage extends StatelessWidget {
   }
 
   Widget _probSection({
-    required String emoji,
+    required IconData icon,
+    required Color color,
     required String title,
     required String body,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Text(emoji, style: const TextStyle(fontSize: 20)),
-            const SizedBox(width: 10),
-            Text(title,
-                style: const TextStyle(
+    return Builder(builder: (context) {
+      final cs = Theme.of(context).colorScheme;
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              IconBadge(icon: icon, color: color, size: 38),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(title,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: cs.onSurface,
+                    )),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            Text(body,
+                style: TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E293B),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: cs.onSurface.withValues(alpha: 0.75),
+                  height: 1.6,
                 )),
-          ]),
-          const SizedBox(height: 10),
-          Text(body,
-              style: const TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF64748B),
-                height: 1.6,
-              )),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    });
   }
 }
 
@@ -1722,7 +1800,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                                   'DAILY QUEST',
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
-                                    fontSize: 10,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF92400E),
                                     letterSpacing: 0.8,
@@ -1800,7 +1878,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                                       'Spot the manipulation 👇',
                                       style: TextStyle(
                                         fontFamily: 'Montserrat',
-                                        fontSize: 9,
+                                        fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                         color: Color(0xFF94A3B8),
                                       ),
@@ -1962,32 +2040,21 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
                       ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-                        child: GestureDetector(
-                          onTap: () => widget
-                              .onAnswered(_selected == _correctIndex),
-                          child: Container(
-                            width: double.infinity,
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 13),
-                            decoration: BoxDecoration(
-                              color: _selected == _correctIndex
-                                  ? const Color(0xFF22C55E)
-                                  : const Color(0xFF6366F1),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Text(
-                              _selected == _correctIndex
-                                  ? '🎉  Nice work! +15 pts'
-                                  : '💪  Got it! Keep learning +5 pts',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
+                        child: GlassButton(
+                          height: 50,
+                          radius: 14,
+                          accent: _selected == _correctIndex
+                              ? const Color(0xFF22C55E)
+                              : const Color(0xFF6366F1),
+                          icon: _selected == _correctIndex
+                              ? Icons.emoji_events_rounded
+                              : Icons.lightbulb_rounded,
+                          label: _selected == _correctIndex
+                              ? 'Nice work! +15 pts'
+                              : 'Got it! Keep learning +5 pts',
+                          fontSize: 13,
+                          onTap: () =>
+                              widget.onAnswered(_selected == _correctIndex),
                         ),
                       ),
                     ],
@@ -2300,6 +2367,7 @@ class _NewsPageState extends State<NewsPage> {
   }
 
   void _changeCategory(String category) {
+    HapticFeedback.selectionClick();
     setState(() {
       _selectedCategory = category;
       _newsArticles = NewsService.fetchNewsByCategory(category);
@@ -2307,18 +2375,7 @@ class _NewsPageState extends State<NewsPage> {
   }
 
   Widget _buildNavbar() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      height: 64,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: _scrolled
-            ? const Border(bottom: BorderSide(color: Color(0x12000000), width: 1))
-            : null,
-        boxShadow: _scrolled
-            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 16, offset: const Offset(0, 4))]
-            : [],
-      ),
+    return GlassTopBar.simple(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
@@ -2334,10 +2391,10 @@ class _NewsPageState extends State<NewsPage> {
                     builder: (_) => OnboardingPage(onComplete: nav.pop),
                   ));
                 },
-                child: Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
+                child: Image.asset('assets/logomain.png', height: 52, fit: BoxFit.contain),
               )
             else
-              Image.asset('assets/logomain.png', height: 62, fit: BoxFit.contain),
+              Image.asset('assets/logomain.png', height: 52, fit: BoxFit.contain),
             const Spacer(),
             const ProfileIcon(),
           ],
@@ -2447,7 +2504,7 @@ class _NewsPageState extends State<NewsPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          snapshot.error.toString(),
+                          friendlyError(snapshot.error),
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontFamily: 'Montserrat',
@@ -2456,31 +2513,14 @@ class _NewsPageState extends State<NewsPage> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () => _changeCategory(_selectedCategory),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF22C55E),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Text(
-                                'Retry',
-                                style: TextStyle(
-                                  fontFamily: 'Montserrat',
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
+                        GlassButton(
+                          label: 'Retry',
+                          icon: Icons.refresh_rounded,
+                          expand: false,
+                          height: 46,
+                          radius: 14,
+                          haptic: GlassHaptic.none,
+                          onTap: () => _changeCategory(_selectedCategory),
                         ),
                       ],
                     ),
@@ -2519,8 +2559,8 @@ class _NewsPageState extends State<NewsPage> {
             },
           ),
         ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: 30),
+        SliverToBoxAdapter(
+          child: SizedBox(height: MediaQuery.of(context).padding.bottom + 110),
         ),
       ],
         ),
@@ -2557,8 +2597,6 @@ class _NewsArticleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final catColor = _categoryColor;
-    final hasReadMore =
-        article.content.trim().length > article.description.trim().length;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -2567,15 +2605,21 @@ class _NewsArticleCard extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () {
-            // Show article details or open link
-            _showArticlePreview(context, article);
+            HapticFeedback.lightImpact();
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => NewsArticlePage(article: article),
+            ));
           },
           child: Container(
             constraints: const BoxConstraints(minHeight: 140),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.1)),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.05),
@@ -2657,7 +2701,7 @@ class _NewsArticleCard extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontFamily: 'Montserrat',
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w800,
                                   color: catColor,
                                 ),
@@ -2678,7 +2722,7 @@ class _NewsArticleCard extends StatelessWidget {
                               '${article.ageRating}+',
                               style: const TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 9,
+                                fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 color: Color(0xFF22C55E),
                               ),
@@ -2691,11 +2735,11 @@ class _NewsArticleCard extends StatelessWidget {
                         article.title,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: Theme.of(context).colorScheme.onSurface,
                           height: 1.4,
                         ),
                       ),
@@ -2705,43 +2749,87 @@ class _NewsArticleCard extends StatelessWidget {
                           article.description,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'Montserrat',
                             fontSize: 12,
-                            color: Color(0xFF64748B),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.72),
                             height: 1.5,
                           ),
                         ),
                       ],
-                      if (hasReadMore) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Read more →',
-                          style: TextStyle(
-                            fontFamily: 'Montserrat',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF22C55E),
-                          ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Read full article →',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF16A34A),
                         ),
-                      ],
+                      ),
                       const SizedBox(height: 12),
+                      Divider(
+                        height: 1,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.1),
+                      ),
+                      const SizedBox(height: 8),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            _formatDate(article.publishedAt),
-                            style: const TextStyle(
-                              fontFamily: 'Montserrat',
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF94A3B8),
+                          Expanded(
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: () => openArticleSource(article),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 6, horizontal: 2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.link_rounded,
+                                        size: 16, color: Color(0xFF0EA5E9)),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        sourceDomain(article),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontFamily: 'Montserrat',
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFF0EA5E9),
+                                          decoration:
+                                              TextDecoration.underline,
+                                          decorationColor: Color(0xFF0EA5E9),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.open_in_new_rounded,
+                                        size: 13, color: Color(0xFF0EA5E9)),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                          Icon(
-                            Icons.arrow_outward_rounded,
-                            size: 14,
-                            color: catColor,
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatDate(article.publishedAt),
+                            style: TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.6),
+                            ),
                           ),
                         ],
                       ),
@@ -2778,104 +2866,6 @@ class _NewsArticleCard extends StatelessWidget {
     }
   }
 
-  void _showArticlePreview(BuildContext context, NewsArticle article) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.8,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(24),
-              topRight: Radius.circular(24),
-            ),
-          ),
-          child: Column(
-            children: [
-              // Handle
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE2E8F0),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (article.imageUrl.isNotEmpty)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            article.imageUrl,
-                            height: 200,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      const SizedBox(height: 16),
-                      Text(
-                        article.source,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        article.title,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _formatDate(article.publishedAt),
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 12,
-                          color: Color(0xFF94A3B8),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Divider(),
-                      const SizedBox(height: 16),
-                      Text(
-                        article.description,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
-                          fontSize: 14,
-                          color: Color(0xFF64748B),
-                          height: 1.6,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }
 
 
@@ -2886,11 +2876,15 @@ class _BottomNavBar extends StatefulWidget {
   final Function(String) onMoreItemSelected;
   final bool moreIsActive;
 
+  /// 0 = light surface behind the bar, 1 = dark hero behind it.
+  final double dark;
+
   const _BottomNavBar({
     required this.selectedTab,
     required this.onTabChanged,
     required this.onMoreItemSelected,
     required this.moreIsActive,
+    this.dark = 0,
   });
 
   @override
@@ -2931,40 +2925,73 @@ class _BottomNavBarState extends State<_BottomNavBar> with TickerProviderStateMi
 
   @override
   Widget build(BuildContext context) {
-    final surface = Theme.of(context).colorScheme.surface;
+    final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
+    final d = widget.dark;
+    // Glass tint follows what is behind the bar so it never sticks out.
+    final lightFill = isDarkTheme
+        ? AppColors.slate800.withValues(alpha: 0.72)
+        : Colors.white.withValues(alpha: 0.74);
+    final darkFill = const Color(0xFF0B1220).withValues(alpha: 0.62);
+    final fill = Color.lerp(lightFill, darkFill, d)!;
+    final edge = Color.lerp(
+      Colors.white.withValues(alpha: isDarkTheme ? 0.10 : 0.85),
+      Colors.white.withValues(alpha: 0.16),
+      d,
+    )!;
+    final fg = Color.lerp(
+      Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62),
+      Colors.white.withValues(alpha: 0.7),
+      d,
+    )!;
+    final accent = Color.lerp(_navAccent(context), AppColors.green, d)!;
+
     return Container(
       decoration: BoxDecoration(
-        color: surface,
+        borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
+            color: Colors.black.withValues(alpha: 0.10 + 0.14 * d),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: NavigationTab.values.map((tab) {
-              if (tab == NavigationTab.more) {
-                return _MoreNavItem(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(32),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: _MainAppState._navHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: fill,
+              borderRadius: BorderRadius.circular(32),
+              border: Border.all(color: edge),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: NavigationTab.values.map((tab) {
+                if (tab == NavigationTab.more) {
+                  return _MoreNavItem(
+                    controller: _tabControllers[tab.index],
+                    onItemSelected: widget.onMoreItemSelected,
+                    isSelected: widget.moreIsActive,
+                    accent: accent,
+                    idle: fg,
+                  );
+                }
+                final isSelected =
+                    !widget.moreIsActive && widget.selectedTab == tab;
+                return _NavBarItem(
+                  tab: tab,
+                  isSelected: isSelected,
                   controller: _tabControllers[tab.index],
-                  onItemSelected: widget.onMoreItemSelected,
-                  isSelected: widget.moreIsActive,
+                  onTap: () => _selectTab(tab),
+                  accent: accent,
+                  idle: fg,
                 );
-              }
-              final isSelected = !widget.moreIsActive && widget.selectedTab == tab;
-              return _NavBarItem(
-                tab: tab,
-                isSelected: isSelected,
-                controller: _tabControllers[tab.index],
-                onTap: () => _selectTab(tab),
-              );
-            }).toList(),
+              }).toList(),
+            ),
           ),
         ),
       ),
@@ -2977,55 +3004,78 @@ class _NavBarItem extends StatelessWidget {
   final bool isSelected;
   final AnimationController controller;
   final VoidCallback onTap;
+  final Color accent;
+  final Color idle;
 
   const _NavBarItem({
     required this.tab,
     required this.isSelected,
     required this.controller,
     required this.onTap,
+    required this.accent,
+    required this.idle,
   });
 
   @override
   Widget build(BuildContext context) {
     return ScaleTransition(
-      scale: Tween<double>(begin: 1, end: 0.8).animate(
+      scale: Tween<double>(begin: 1, end: 0.85).animate(
         CurvedAnimation(parent: controller, curve: Curves.easeInOut),
       ),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                tab.icon,
-                size: 24,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.onSurface
-                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                tab.label,
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.onSurface
-                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
-                ),
-              ),
-            ],
-          ),
+        child: _NavPill(
+          icon: tab.icon,
+          label: tab.label,
+          isSelected: isSelected,
+          accent: accent,
+          idle: idle,
         ),
+      ),
+    );
+  }
+}
+
+class _NavPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isSelected;
+  final Color accent;
+  final Color idle;
+  const _NavPill({
+    required this.icon,
+    required this.label,
+    required this.isSelected,
+    required this.accent,
+    required this.idle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? accent.withValues(alpha: 0.16) : Colors.transparent,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 24, color: isSelected ? accent : idle),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+              color: isSelected ? accent : idle,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3036,119 +3086,82 @@ class _MoreNavItem extends StatelessWidget {
     required this.controller,
     required this.onItemSelected,
     required this.isSelected,
+    required this.accent,
+    required this.idle,
   });
   final AnimationController controller;
   final Function(String) onItemSelected;
   final bool isSelected;
+  final Color accent;
+  final Color idle;
+
+  PopupMenuItem<String> _item(
+      BuildContext context, String value, IconData icon, Color color, String label) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.over,
-      offset: const Offset(0, -68),
-      onOpened: () => controller.forward().then((_) => controller.reverse()),
-      onSelected: onItemSelected,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      offset: const Offset(0, -76),
+      onOpened: () {
+        HapticFeedback.selectionClick();
+        controller.forward().then((_) => controller.reverse());
+      },
+      onSelected: (v) {
+        HapticFeedback.lightImpact();
+        onItemSelected(v);
+      },
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       elevation: 12,
-      color: Colors.white,
-      itemBuilder: (_) => [
-        const PopupMenuItem<String>(
-          value: 'election',
-          child: Row(
-            children: [
-              Icon(Icons.how_to_vote_rounded, color: Color(0xFF1D4ED8), size: 20),
-              SizedBox(width: 12),
-              Text(
-                'Election Integrity',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuItem<String>(
-          value: 'learn',
-          child: Row(
-            children: [
-              Icon(Icons.forum_rounded, color: Color(0xFF1E293B), size: 20),
-              SizedBox(width: 12),
-              Text(
-                'Community Hub',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuItem<String>(
-          value: 'trust_lens',
-          child: Row(
-            children: [
-              Icon(Icons.videocam_rounded, color: Color(0xFF00BFFF), size: 20),
-              SizedBox(width: 12),
-              Text(
-                'Trust Lens',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-            ],
-          ),
-        ),
+      color: Theme.of(context).colorScheme.surface,
+      itemBuilder: (context) => [
+        _item(context, 'election', Icons.how_to_vote_rounded,
+            const Color(0xFF1D4ED8), 'Election Integrity'),
+        _item(context, 'learn', Icons.forum_rounded, const Color(0xFF6366F1),
+            'Community Hub'),
+        _item(context, 'trust_lens', Icons.videocam_rounded,
+            const Color(0xFF00BFFF), 'Trust Lens'),
       ],
       child: ScaleTransition(
-        scale: Tween<double>(begin: 1, end: 0.8).animate(
+        scale: Tween<double>(begin: 1, end: 0.85).animate(
           CurvedAnimation(parent: controller, curve: Curves.easeInOut),
         ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.more_horiz_rounded,
-                size: 24,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.onSurface
-                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'More',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.onSurface
-                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.40),
-                ),
-              ),
-            ],
-          ),
+        child: _NavPill(
+          icon: Icons.more_horiz_rounded,
+          label: 'More',
+          isSelected: isSelected,
+          accent: accent,
+          idle: idle,
         ),
       ),
     );
   }
 }
+
+Color _navAccent(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+        ? AppColors.green
+        : AppColors.greenDark;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SHARE EXTENSION ROUTING SHEET
@@ -3169,10 +3182,11 @@ class _ShareRoutingSheet extends StatelessWidget {
     final text = content['text'] as String? ?? '';
     final preview = text.length > 80 ? '${text.substring(0, 78)}…' : text;
 
+    final cs = Theme.of(context).colorScheme;
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.fromLTRB(
           24, 20, 24, 24 + MediaQuery.of(context).padding.bottom),
@@ -3200,29 +3214,30 @@ class _ShareRoutingSheet extends StatelessWidget {
                   color: const Color(0xFF22C55E).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Center(child: Text('📤', style: TextStyle(fontSize: 20))),
+                child: const Icon(Icons.ios_share_rounded,
+                    color: Color(0xFF22C55E), size: 22),
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Shared Content',
                       style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 17,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF1E293B),
+                        color: cs.onSurface,
                       ),
                     ),
                     Text(
                       'What would you like to do with this ${isImage ? 'image' : 'text'}?',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF64748B),
+                        color: cs.onSurface.withValues(alpha: 0.7),
                       ),
                     ),
                   ],
@@ -3237,33 +3252,34 @@ class _ShareRoutingSheet extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
+              color: cs.onSurface.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: cs.onSurface.withValues(alpha: 0.12)),
             ),
             child: isImage
-                ? const Row(
+                ? Row(
                     children: [
-                      Text('🖼️', style: TextStyle(fontSize: 20)),
-                      SizedBox(width: 10),
+                      const Icon(Icons.image_rounded,
+                          color: Color(0xFF6366F1), size: 22),
+                      const SizedBox(width: 10),
                       Text(
                         'Image ready to analyze',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E293B),
+                          color: cs.onSurface,
                         ),
                       ),
                     ],
                   )
                 : Text(
                     '"$preview"',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF475569),
+                      color: cs.onSurface.withValues(alpha: 0.8),
                       height: 1.5,
                     ),
                   ),
@@ -3275,7 +3291,7 @@ class _ShareRoutingSheet extends StatelessWidget {
             children: [
               Expanded(
                 child: _RouteBtn(
-                  icon: '⚡',
+                  icon: Icons.bolt_rounded,
                   label: 'Fact-Check',
                   sublabel: 'Explain Why',
                   color: const Color(0xFF6366F1),
@@ -3285,7 +3301,7 @@ class _ShareRoutingSheet extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _RouteBtn(
-                  icon: '✍️',
+                  icon: Icons.edit_note_rounded,
                   label: 'De-Bias',
                   sublabel: 'Rewrite in Neutral',
                   color: const Color(0xFF22C55E),
@@ -3308,47 +3324,45 @@ class _RouteBtn extends StatelessWidget {
     required this.color,
     required this.onTap,
   });
-  final String icon, label, sublabel;
+  final IconData icon;
+  final String label, sublabel;
   final Color color;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () { HapticFeedback.mediumImpact(); onTap(); },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withValues(alpha: 0.25)),
-        ),
-        child: Column(
-          children: [
-            Text(icon, style: const TextStyle(fontSize: 26)),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
+    return GlassButton(
+      height: 108,
+      radius: 18,
+      filled: false,
+      accent: color,
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 30),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: color,
             ),
-            const SizedBox(height: 2),
-            Text(
-              sublabel,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF64748B),
-              ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            sublabel,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -3356,201 +3370,36 @@ class _RouteBtn extends StatelessWidget {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PAGE TRANSITION OVERLAY
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _TransitionInfo {
-  const _TransitionInfo({
-    required this.label,
-    required this.icon,
-    required this.color,
-  });
-  final String   label;
-  final IconData icon;
-  final Color    color;
-}
-
-class _PageTransitionOverlay extends StatelessWidget {
-  const _PageTransitionOverlay({
-    required this.controller,
-    required this.info,
-  });
-  final AnimationController controller;
-  final _TransitionInfo     info;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (_, _) {
-        final t = controller.value;
-
-        // Backdrop opacity: fade in 0→0.38, hold, fade out 0.62→1.0
-        final backdropOpacity = t < 0.38
-            ? t / 0.38
-            : t > 0.62
-                ? 1.0 - (t - 0.62) / 0.38
-                : 1.0;
-
-        // Center container: spring in, hold, shrink out
-        final centerScale = t < 0.42
-            ? Curves.elasticOut.transform((t / 0.42).clamp(0.0, 1.0)) * 0.25 + 0.75
-            : t > 0.62
-                ? 1.0 - (t - 0.62) / 0.38 * 0.18
-                : 1.0;
-
-        // Arc: 1.5 full rotations across the whole animation
-        final arcAngle = t * math.pi * 3.0;
-
-        // Icon pulse during the hold phase
-        final iconPulse = (t >= 0.38 && t <= 0.62)
-            ? 1.0 + 0.08 * math.sin((t - 0.38) / 0.24 * math.pi * 3)
-            : 1.0;
-
-        return Opacity(
-          opacity: backdropOpacity.clamp(0.0, 1.0),
-          child: Container(
-            color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.96),
-            child: Center(
-              child: Transform.scale(
-                scale: centerScale.clamp(0.0, 1.15),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 108, height: 108,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Faint track ring
-                          CustomPaint(
-                            size: const Size(108, 108),
-                            painter: _RingTrackPainter(color: info.color),
-                          ),
-                          // Spinning gradient arc
-                          Transform.rotate(
-                            angle: arcAngle,
-                            child: CustomPaint(
-                              size: const Size(108, 108),
-                              painter: _SpinningArcPainter(color: info.color),
-                            ),
-                          ),
-                          // Pulsing center icon
-                          Transform.scale(
-                            scale: iconPulse,
-                            child: Container(
-                              width: 64, height: 64,
-                              decoration: BoxDecoration(
-                                color: info.color.withValues(alpha: 0.12),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(info.icon, color: info.color, size: 30),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Opacity(
-                      opacity: (backdropOpacity * 1.4).clamp(0.0, 1.0),
-                      child: Text(
-                        info.label,
-                        style: TextStyle(
-                          fontFamily:    'Montserrat',
-                          fontSize:      14,
-                          fontWeight:    FontWeight.w800,
-                          color:         info.color,
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Opacity(
-                      opacity: (backdropOpacity * 1.2).clamp(0.0, 1.0),
-                      child: Container(
-                        width: 36, height: 3,
-                        decoration: BoxDecoration(
-                          color:        info.color.withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// Faint full-circle track behind the arc
-class _RingTrackPainter extends CustomPainter {
-  const _RingTrackPainter({required this.color});
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      size.width / 2 - 5,
-      Paint()
-        ..color       = color.withValues(alpha: 0.14)
-        ..style       = PaintingStyle.stroke
-        ..strokeWidth = 4.5,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingTrackPainter old) => old.color != color;
-}
-
-// 260° gradient arc — rotated externally via Transform.rotate
-class _SpinningArcPainter extends CustomPainter {
-  const _SpinningArcPainter({required this.color});
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(5, 5, size.width - 10, size.height - 10);
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      math.pi * 1.44,
-      false,
-      Paint()
-        ..shader = SweepGradient(
-            startAngle: 0,
-            endAngle:   math.pi * 2,
-            colors:     [color.withValues(alpha: 0.0), color],
-          ).createShader(rect)
-        ..style       = PaintingStyle.stroke
-        ..strokeWidth = 4.5
-        ..strokeCap   = StrokeCap.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_SpinningArcPainter old) => old.color != color;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  QUEST MINI CHIP  —  persistent pill shown after the banner is minimized
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _QuestMiniChip extends StatefulWidget {
-  const _QuestMiniChip({required this.onTap});
+class _QuestFloatingBadge extends StatefulWidget {
+  const _QuestFloatingBadge({required this.onTap, this.bottomInset = 0});
   final VoidCallback onTap;
+  final double bottomInset;
 
   @override
-  State<_QuestMiniChip> createState() => _QuestMiniChipState();
+  State<_QuestFloatingBadge> createState() => _QuestFloatingBadgeState();
 }
 
-class _QuestMiniChipState extends State<_QuestMiniChip>
+class _QuestFloatingBadgeState extends State<_QuestFloatingBadge>
     with SingleTickerProviderStateMixin {
+  static const double _collapsedW = 52;
+  static const double _expandedW = 148;
+  static const double _h = 52;
+  static const double _margin = 12;
+
+  // Remembered for the session so the badge returns where the user left it.
+  static double? _savedTop;
+  static bool _savedDockRight = true;
+
   late final AnimationController _pulse;
+  Timer? _collapseTimer;
+  bool _expanded = true;
+  bool _dragging = false;
+  bool _dockRight = _savedDockRight;
+  double? _top;
+  double _dragLeft = 0;
 
   @override
   void initState() {
@@ -3559,71 +3408,167 @@ class _QuestMiniChipState extends State<_QuestMiniChip>
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
+    _collapseTimer = Timer(const Duration(seconds: 4), _collapse);
   }
 
   @override
   void dispose() {
+    _collapseTimer?.cancel();
     _pulse.dispose();
     super.dispose();
   }
 
+  void _collapse() {
+    if (mounted && !_dragging) setState(() => _expanded = false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder: (_, child) => Transform.scale(
-        scale: 1.0 + _pulse.value * 0.04,
-        child: child,
-      ),
-      child: GestureDetector(
-        onTap: () { HapticFeedback.lightImpact(); widget.onTap(); },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFEF3C7),
-            borderRadius: BorderRadius.circular(100),
-            border: Border.all(color: const Color(0xFFFBBF24)),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFFF59E0B).withValues(alpha: 0.30),
-                blurRadius: 14,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('📚', style: TextStyle(fontSize: 13)),
-              const SizedBox(width: 6),
-              const Text(
-                'Daily Quest',
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF92400E),
-                ),
-              ),
-              const SizedBox(width: 6),
-              // Live dot indicating unanswered quest
-              AnimatedBuilder(
-                animation: _pulse,
-                builder: (_, _) => Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: Color.lerp(
-                      const Color(0xFFF59E0B),
-                      const Color(0xFFEA580C),
-                      _pulse.value,
-                    ),
-                    shape: BoxShape.circle,
+    final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    return Positioned.fill(
+      child: LayoutBuilder(builder: (context, box) {
+        final w = box.maxWidth;
+        final h = box.maxHeight;
+        final minTop = 84.0;
+        final maxTop =
+            (h - _h - 16 - widget.bottomInset).clamp(minTop, double.infinity);
+        _top ??= (_savedTop ?? h * 0.55).clamp(minTop, maxTop);
+        final curW = _expanded ? _expandedW : _collapsedW;
+        final dockedLeft = _dockRight ? w - curW - _margin : _margin;
+        final left = _dragging ? _dragLeft : dockedLeft;
+
+        return Stack(
+          children: [
+            AnimatedPositioned(
+              duration: _dragging
+                  ? Duration.zero
+                  : const Duration(milliseconds: 320),
+              curve: Curves.easeOutCubic,
+              left: left,
+              top: _top,
+              child: IgnorePointer(
+                ignoring: keyboardOpen,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: keyboardOpen ? 0 : (_dragging ? 1 : 0.94),
+                  child: GestureDetector(
+                    onTap: () {
+                      HapticFeedback.lightImpact();
+                      widget.onTap();
+                    },
+                    onPanStart: (_) {
+                      HapticFeedback.selectionClick();
+                      _collapseTimer?.cancel();
+                      setState(() {
+                        _dragging = true;
+                        _dragLeft = dockedLeft;
+                      });
+                    },
+                    onPanUpdate: (d) {
+                      setState(() {
+                        _dragLeft = (_dragLeft + d.delta.dx)
+                            .clamp(_margin, w - curW - _margin);
+                        _top = (_top! + d.delta.dy).clamp(minTop, maxTop);
+                      });
+                    },
+                    onPanEnd: (_) {
+                      HapticFeedback.lightImpact();
+                      final centre = _dragLeft + curW / 2;
+                      setState(() {
+                        _dragging = false;
+                        _dockRight = centre > w / 2;
+                        _savedDockRight = _dockRight;
+                        _savedTop = _top;
+                      });
+                      _collapseTimer =
+                          Timer(const Duration(seconds: 3), _collapse);
+                    },
+                    child: _buildBadge(curW),
                   ),
                 ),
               ),
-            ],
+            ),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildBadge(double curW) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (_, child) => Transform.scale(
+        scale: 1.0 + _pulse.value * 0.03,
+        child: child,
+      ),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        width: curW,
+        height: _h,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFEF3C7), Color(0xFFFDE68A)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          borderRadius: BorderRadius.circular(_h / 2),
+          border: Border.all(color: const Color(0xFFFBBF24), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+              blurRadius: 16,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.menu_book_rounded,
+                    color: Color(0xFF6366F1), size: 24),
+                if (curW > _collapsedW + 20) ...[
+                  const SizedBox(width: 8),
+                  const Flexible(
+                    child: Text(
+                      'Daily Quest',
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      softWrap: false,
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            Positioned(
+              top: 9,
+              right: curW > _collapsedW + 20 ? 10 : 9,
+              child: AnimatedBuilder(
+                animation: _pulse,
+                builder: (_, _) => Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Color.lerp(const Color(0xFFF59E0B),
+                        const Color(0xFFEA580C), _pulse.value),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3721,7 +3666,8 @@ class _StreakCardState extends State<_StreakCard>
               ),
               child: Row(
                 children: [
-                  const Text('🔥', style: TextStyle(fontSize: 28)),
+                  const Icon(Icons.local_fire_department_rounded,
+                      color: Color(0xFFF97316), size: 32),
                   const SizedBox(width: 14),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3765,7 +3711,7 @@ class _StreakCardState extends State<_StreakCard>
                       'Keep it up!',
                       style: TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFFEA580C),
                       ),
@@ -3845,7 +3791,8 @@ class _FireParticleState extends State<_FireParticle>
               opacity: opacity,
               child: Transform.scale(
                 scale: scale,
-                child: const Text('🔥', style: TextStyle(fontSize: 22)),
+                child: const Icon(Icons.local_fire_department_rounded,
+                    color: Color(0xFFF97316), size: 24),
               ),
             ),
           ),
@@ -3858,254 +3805,6 @@ class _FireParticleState extends State<_FireParticle>
 // ─────────────────────────────────────────────────────────────────────────────
 //  SOCIAL POSTS MARQUEE  —  variable-width tiles sized to each image's aspect ratio
 // ─────────────────────────────────────────────────────────────────────────────
-
-class _SocialPostsMarquee extends StatefulWidget {
-  const _SocialPostsMarquee();
-  @override
-  State<_SocialPostsMarquee> createState() => _SocialPostsMarqueeState();
-}
-
-class _SocialPostsMarqueeState extends State<_SocialPostsMarquee>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _ctrl;
-  bool _paused = false;
-  bool _loaded = false;
-
-  // Computed per-image tile widths (excluding gap) + total loop width.
-  final List<double> _tileWidths = [];
-  double _totalW = 0;
-
-  static const _tileH  = 150.0;
-  static const _gap    = 8.0;
-  static const _speed  = 44.0; // px / second
-
-  // 0-indexed posts that should display at square (1:1) dimensions.
-  static const _squarePosts = {3, 4, 5, 6}; // post4, post5, post6, post7
-
-  // Display order: interleave wide posts (1,2,3,8) with square posts (4,5,6,7).
-  // Values are 0-based post indices → post1=0, post4=3, post2=1, post5=4 …
-  static const _postOrder = [0, 3, 1, 4, 2, 5, 7, 6];
-
-  // Platform badges aligned to _postOrder display positions.
-  static const _platforms = [
-    'assets/YouTubeicon.png',    // post1 (wide)
-    'assets/Instagramicon.png',  // post4 (square)
-    'assets/Xicon.png',          // post2 (wide)
-    'assets/Facebookicon.png',   // post5 (square)
-    'assets/TikTokicon.png',     // post3 (wide)
-    'assets/YouTubeicon.png',    // post6 (square)
-    'assets/Xicon.png',          // post8 (wide)
-    'assets/TikTokicon.png',     // post7 (square)
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _measureImages();
-  }
-
-  // Resolve each asset through Flutter's image pipeline to get natural dimensions.
-  Future<void> _measureImages() async {
-    final sizes = await Future.wait(
-      List.generate(8, (i) => _resolveSize('assets/post${i + 1}.png')),
-    );
-    if (!mounted) return;
-
-    for (final idx in _postOrder) {
-      final s = sizes[idx];
-      final w = _squarePosts.contains(idx)
-          ? _tileH
-          : (s.width > 0 && s.height > 0)
-              ? _tileH * s.width / s.height
-              : _tileH;
-      _tileWidths.add(w);
-    }
-    _totalW = _tileWidths.fold(0, (sum, w) => sum + w + _gap);
-
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: (_totalW / _speed * 1000).round()),
-    )..repeat();
-
-    setState(() => _loaded = true);
-  }
-
-  Future<Size> _resolveSize(String asset) async {
-    final comp = Completer<Size>();
-    final stream = AssetImage(asset).resolve(ImageConfiguration.empty);
-    late ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (info, _) {
-        if (!comp.isCompleted) {
-          comp.complete(Size(
-            info.image.width.toDouble(),
-            info.image.height.toDouble(),
-          ));
-        }
-        stream.removeListener(listener);
-      },
-      onError: (_, _) {
-        if (!comp.isCompleted) comp.complete(const Size(_tileH, _tileH));
-        stream.removeListener(listener);
-      },
-    );
-    stream.addListener(listener);
-    return comp.future;
-  }
-
-  @override
-  void dispose() {
-    _ctrl?.dispose();
-    super.dispose();
-  }
-
-  void _togglePause() {
-    if (_ctrl == null) return;
-    HapticFeedback.selectionClick();
-    setState(() => _paused = !_paused);
-    _paused ? _ctrl!.stop() : _ctrl!.repeat();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Show a fixed-height placeholder until image sizes are resolved.
-    if (!_loaded || _ctrl == null) {
-      return const SizedBox(height: _tileH);
-    }
-
-    return GestureDetector(
-      onTap: _togglePause,
-      behavior: HitTestBehavior.opaque,
-      child: Stack(
-        children: [
-          // ── Scrolling strip ──────────────────────────────────────────────
-          ClipRect(
-            child: SizedBox(
-              height: _tileH,
-              child: OverflowBox(
-                maxWidth: double.infinity,
-                alignment: Alignment.centerLeft,
-                child: AnimatedBuilder(
-                  animation: _ctrl!,
-                  builder: (_, child) => Transform.translate(
-                    offset: Offset(-_ctrl!.value * _totalW, 0),
-                    child: child,
-                  ),
-                  // Two copies side-by-side for seamless loop.
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...List.generate(8, _buildTile),
-                      ...List.generate(8, _buildTile),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // ── Pause overlay ────────────────────────────────────────────────
-          AnimatedOpacity(
-            opacity: _paused ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 200),
-            child: Container(
-              height: _tileH,
-              color: Colors.black.withValues(alpha: 0.45),
-              child: const Center(
-                child: Icon(
-                  Icons.pause_circle_filled_rounded,
-                  color: Colors.white,
-                  size: 38,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTile(int i) {
-    final postNum = _postOrder[i] + 1; // 1-based filename
-    final tileW = _tileWidths[i];
-
-    return Container(
-      width: tileW,
-      height: _tileH,
-      margin: const EdgeInsets.only(right: _gap),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(sigmaX: 1.4, sigmaY: 1.4),
-              child: Image.asset(
-                'assets/post$postNum.png',
-                fit: BoxFit.cover,
-              ),
-            ),
-            // Bottom vignette for badge legibility
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.45, 1.0],
-                  colors: [Color(0x00000000), Color(0xAA000000)],
-                ),
-              ),
-            ),
-            // Platform logo — bottom-left
-            Positioned(
-              bottom: 7,
-              left: 7,
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.22),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(3),
-                child: Image.asset(_platforms[i], fit: BoxFit.contain),
-              ),
-            ),
-            // FLAGGED chip — top-right
-            Positioned(
-              top: 7,
-              right: 7,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xD9EF4444),
-                  borderRadius: BorderRadius.circular(100),
-                ),
-                child: const Text(
-                  '⚠ FLAGGED',
-                  style: TextStyle(
-                    fontFamily: 'Montserrat',
-                    fontSize: 6,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  CREDEXA+ AD — purple accent constant
@@ -4552,10 +4251,13 @@ class _CredexaPlusAdState extends State<_CredexaPlusAd>
                                       color: Colors.transparent,
                                       child: InkWell(
                                         borderRadius: BorderRadius.circular(14),
-                                        onTap: () => launchUrl(
-                                          Uri.parse('https://chromewebstore.google.com/detail/abflkecbafbaojegnhpdcdlkcmpdemgd?utm_source=item-share-cb'),
-                                          mode: LaunchMode.externalApplication,
-                                        ),
+                                        onTap: () {
+                                          HapticFeedback.lightImpact();
+                                          launchUrl(
+                                            Uri.parse('https://chromewebstore.google.com/detail/abflkecbafbaojegnhpdcdlkcmpdemgd?utm_source=item-share-cb'),
+                                            mode: LaunchMode.externalApplication,
+                                          );
+                                        },
                                         child: Row(
                                           mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
@@ -4592,6 +4294,39 @@ class _CredexaPlusAdState extends State<_CredexaPlusAd>
           ),
         );
       },
+    );
+  }
+}
+
+
+class _BrandSplash extends StatelessWidget {
+  const _BrandSplash();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppColors.brandGradient),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image.asset('assets/logomain.png', width: 120, height: 120),
+              const SizedBox(height: 20),
+              const Text(
+                'Credexa',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 30,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
