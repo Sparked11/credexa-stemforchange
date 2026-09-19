@@ -94,17 +94,21 @@ class GlassButton extends StatelessWidget {
             if ((icon != null || loading) && label != null)
               const SizedBox(width: 9),
             if (label != null)
+              // Shrinks instead of truncating so the label is always readable.
               Flexible(
-                child: Text(
-                  label!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Montserrat',
-                    fontSize: fontSize,
-                    fontWeight: FontWeight.w800,
-                    color: fg,
-                    letterSpacing: 0.2,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label!,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.w800,
+                      color: fg,
+                      letterSpacing: 0.2,
+                    ),
                   ),
                 ),
               ),

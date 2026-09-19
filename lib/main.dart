@@ -1025,6 +1025,12 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
         dark > 0.5 || Theme.of(context).brightness == Brightness.dark;
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 220),
+      // Keep both variants pinned to the left edge so the swap never shifts.
+      layoutBuilder: (current, previous) => Stack(
+        alignment: Alignment.centerLeft,
+        clipBehavior: Clip.none,
+        children: [...previous, if (current != null) current],
+      ),
       child: useBadge
           ? Row(
               key: const ValueKey('badge'),

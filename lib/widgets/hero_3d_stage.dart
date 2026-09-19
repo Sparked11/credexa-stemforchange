@@ -519,18 +519,19 @@ class _Hero3DStageState extends State<Hero3DStage>
       child: Row(
         children: [
           Expanded(
-            flex: 3,
+            flex: 6,
             child: GlassButton(
               label: 'Check a claim',
               icon: Icons.fact_check_rounded,
               onTap: widget.onCheckClaim,
               onDark: true,
               haptic: GlassHaptic.medium,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            flex: 2,
+            flex: 5,
             child: GlassButton(
               label: 'Trust Lens',
               icon: Icons.videocam_rounded,
@@ -539,6 +540,7 @@ class _Hero3DStageState extends State<Hero3DStage>
               accent: const Color(0xFF38BDF8),
               onDark: true,
               haptic: GlassHaptic.light,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
           ),
         ],
