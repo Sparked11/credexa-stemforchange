@@ -106,7 +106,7 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/sign_in_with_apple/ios"
 
 SPEC CHECKSUMS:
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   google_mlkit_commons: 1e6ef6605d7281f35baf2b355e6049b9984fd624
   google_mlkit_face_detection: ceddb8d65f594b9ff8379efc16ab2c4efa801349
   google_mlkit_text_recognition: 309a3a493765ea17c7368cadb4a710391e73902c
