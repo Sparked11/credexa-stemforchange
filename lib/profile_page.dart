@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'auth_service.dart';
 import 'legal_page.dart';
 import 'services/connectivity_service.dart';
+import 'services/notification_service.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 import 'theme/app_tokens.dart';
@@ -86,6 +87,8 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   bool _uploadingPhoto = false;
+  int _previewDelay = 5;
+  bool _sendingPreview = false;
   final ChromeController _chrome = ChromeController();
 
   @override
@@ -260,6 +263,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   quests: data.quests,
                 ),
               ),
+              SliverToBoxAdapter(
+                  child: ScrollReveal(child: _buildNotifications(context))),
               SliverToBoxAdapter(
                   child: ScrollReveal(
                       child: _buildAccount(context, user, joinDateStr))),
@@ -753,6 +758,232 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // ── Badges ───────────────────────────────────────────────────────────────────
+
+  // ── Notifications ────────────────────────────────────────────────────────────
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  static const _deniedMsg =
+      'Notifications are turned off for Credexa. Turn them on in Settings > Notifications.';
+
+  Future<void> _toggleDaily(bool on) async {
+    HapticFeedback.selectionClick();
+    final ok = await NotificationService.setDailyEnabled(on);
+    if (on && !ok) _snack(_deniedMsg);
+  }
+
+  Future<void> _pickReminderTime() async {
+    HapticFeedback.lightImpact();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: NotificationService.dailyTime.value,
+    );
+    if (picked != null) await NotificationService.setDailyTime(picked);
+  }
+
+  Future<void> _sendPreview() async {
+    setState(() => _sendingPreview = true);
+    final ok = await NotificationService.sendPreview(seconds: _previewDelay);
+    if (!mounted) return;
+    setState(() => _sendingPreview = false);
+    _snack(ok
+        ? 'Scheduled. Press Home or lock your phone: it arrives in $_previewDelay seconds.'
+        : _deniedMsg);
+  }
+
+  Widget _buildNotifications(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isDark
+                ? [const Color(0xFF243247), cs.surface]
+                : [Colors.white, const Color(0xFFF1F5F9)],
+          ),
+          border: Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.07 : 0.9)),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.indigo.withValues(alpha: 0.14),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const IconBadge(
+                    icon: Icons.notifications_active_rounded,
+                    color: AppColors.indigo,
+                    size: 40),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Notifications',
+                          style: _mp(
+                              size: 15,
+                              weight: FontWeight.w900,
+                              color: cs.onSurface)),
+                      Text('Reminders are created on your phone. Nothing is sent to a server.',
+                          style: _mp(
+                              size: 11,
+                              weight: FontWeight.w500,
+                              color: cs.onSurface.withValues(alpha: 0.7))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ValueListenableBuilder<bool>(
+              valueListenable: NotificationService.dailyEnabled,
+              builder: (context, on, _) => Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text('Daily quest reminder',
+                            style: _mp(
+                                size: 13,
+                                weight: FontWeight.w700,
+                                color: cs.onSurface)),
+                      ),
+                      Switch.adaptive(
+                        value: on,
+                        activeTrackColor: AppColors.green,
+                        onChanged: _toggleDaily,
+                      ),
+                    ],
+                  ),
+                  if (on)
+                    ValueListenableBuilder<TimeOfDay>(
+                      valueListenable: NotificationService.dailyTime,
+                      builder: (context, t, _) => InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: _pickReminderTime,
+                        child: Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: cs.onSurface.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.schedule_rounded,
+                                  size: 18, color: cs.onSurface),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text('Remind me at',
+                                    style: _mp(
+                                        size: 12,
+                                        weight: FontWeight.w600,
+                                        color: cs.onSurface)),
+                              ),
+                              Text(t.format(context),
+                                  style: _mp(
+                                      size: 13,
+                                      weight: FontWeight.w900,
+                                      color: AppColors.greenDark)),
+                              const SizedBox(width: 4),
+                              Icon(Icons.chevron_right_rounded,
+                                  size: 20,
+                                  color: cs.onSurface.withValues(alpha: 0.5)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Divider(height: 1, color: cs.onSurface.withValues(alpha: 0.1)),
+            const SizedBox(height: 14),
+            Text('Preview a notification',
+                style: _mp(
+                    size: 13, weight: FontWeight.w700, color: cs.onSurface)),
+            const SizedBox(height: 4),
+            Text(
+                'Tap the button, then press Home or lock your phone. The notification arrives after the delay. Tap it to jump back into Credexa.',
+                style: _mp(
+                    size: 12,
+                    weight: FontWeight.w500,
+                    color: cs.onSurface.withValues(alpha: 0.72))),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (final sec in const [5, 10, 30]) ...[
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _previewDelay = sec);
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: _previewDelay == sec
+                              ? AppColors.indigo.withValues(alpha: 0.16)
+                              : cs.onSurface.withValues(alpha: 0.05),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _previewDelay == sec
+                                ? AppColors.indigo
+                                : Colors.transparent,
+                            width: 1.4,
+                          ),
+                        ),
+                        child: Text('$sec sec',
+                            style: _mp(
+                                size: 12,
+                                weight: FontWeight.w800,
+                                color: _previewDelay == sec
+                                    ? AppColors.indigo
+                                    : cs.onSurface.withValues(alpha: 0.7))),
+                      ),
+                    ),
+                  ),
+                  if (sec != 30) const SizedBox(width: 8),
+                ],
+              ],
+            ),
+            const SizedBox(height: 12),
+            GlassButton(
+              label: 'Send test notification',
+              icon: Icons.notifications_active_rounded,
+              accent: AppColors.indigo,
+              height: 50,
+              radius: 14,
+              loading: _sendingPreview,
+              onTap: _sendPreview,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   // ── Account ──────────────────────────────────────────────────────────────────
 

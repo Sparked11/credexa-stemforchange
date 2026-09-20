@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import ARKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -9,6 +10,11 @@ import ARKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+
+    // Local notifications: present banners in the foreground and deliver taps.
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
+    }
 
     // ── Trust Lens AR platform view ──────────────────────────────────────────
     // Register unconditionally so the factory exists on simulators too.

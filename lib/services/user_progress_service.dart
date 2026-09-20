@@ -1,3 +1,4 @@
+import 'notification_service.dart';
 import 'achievement_service.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -323,6 +324,7 @@ class UserProgressService {
   }
 
   static Future<void> recordQuestResult({required bool correct}) async {
+    unawaited(NotificationService.skipToday());
     final s = stats.value;
     final newCorrect = s.predictionsCorrect + (correct ? 1 : 0);
     final newTotal   = s.predictionsTotal + 1;

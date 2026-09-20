@@ -36,6 +36,7 @@ import 'widgets/maturity_levels_sheet.dart';
 import 'widgets/achievement_toast.dart';
 import 'widgets/offline_banner.dart';
 import 'services/connectivity_service.dart';
+import 'services/notification_service.dart';
 import 'services/achievement_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +130,11 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  await Future.wait([AuthService.init(), AppThemeService.load()]);
+  await Future.wait([
+    AuthService.init(),
+    AppThemeService.load(),
+    NotificationService.init(),
+  ]);
   // Register global profile navigation — used by every ProfileIcon automatically.
   ProfileService.openProfile = (ctx) => Navigator.of(ctx).push(
         MaterialPageRoute(builder: (_) => const ProfilePage()),
@@ -248,6 +253,7 @@ class _MainAppState extends State<MainApp>
   late AnimationController _questSlideCtrl;
   final ChromeController _chrome = ChromeController();
   StreamSubscription<Achievement>? _achievementSub;
+  StreamSubscription<String>? _notificationSub;
   static const double _navHeight = 64;
   String? _moreSubPage;
   bool   _showDailyQuest = false;
@@ -261,6 +267,7 @@ class _MainAppState extends State<MainApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ConnectivityService.start();
+    _notificationSub = NotificationService.taps.listen(_onNotificationTap);
     _achievementSub = AchievementService.stream.listen((a) {
       if (!mounted) return;
       AchievementToaster.enqueue(
@@ -278,6 +285,8 @@ class _MainAppState extends State<MainApp>
       vsync: this,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final launchPayload = NotificationService.consumeLaunchPayload();
+      if (launchPayload != null) _onNotificationTap(launchPayload);
       _checkSharedContent();
       // Delay so the app finishes its entrance animation first.
       Future.delayed(const Duration(seconds: 2), _tryLoadDailyQuest);
@@ -370,6 +379,7 @@ class _MainAppState extends State<MainApp>
     _pageTransitionController.dispose();
     _questSlideCtrl.dispose();
     _achievementSub?.cancel();
+    _notificationSub?.cancel();
     _chrome.dispose();
     super.dispose();
   }
@@ -452,6 +462,14 @@ class _MainAppState extends State<MainApp>
           onNavigateMore: _selectMoreItem,
         );
     }
+  }
+
+  // Tapping a Credexa notification lands on Home (and reopens the daily quest).
+  void _onNotificationTap(String payload) {
+    if (!mounted) return;
+    if (_moreSubPage != null) setState(() => _moreSubPage = null);
+    widget.onTabChanged(NavigationTab.home);
+    if (_showDailyQuest && _questMinimized) _expandQuest();
   }
 
   void _resetChromeAfterFrame() {
