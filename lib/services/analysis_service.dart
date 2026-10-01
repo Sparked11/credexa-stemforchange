@@ -173,7 +173,7 @@ class AnalysisService {
     // ── Step 0: scrape real articles ──────────────────────────────────────────
     final articleItems = await WebSearchService.searchWithLinks(claim, max: 5);
     final scraped      = await WebSearchService.scrapeArticles(articleItems, max: 3, claimHint: claim);
-    // RSS headline fallback only when scraping yielded nothing.
+    // RSS headline fallback only when scraping found nothing.
     final fallbackHeadlines =
         scraped.isEmpty ? await WebSearchService.quickFact(claim) : '';
 
@@ -253,7 +253,7 @@ SCORING RULES:
 
     final round2 = await analyze(round2Prompt);
 
-    // Blend Web Search score (25 %) into synthesis.
+    // Blend Web Search and debate scores into synthesis.
     final blendedScore =
         ((round2.synthesis.finalScore * 3 + webResult.credibilityScore) / 4).round();
 
