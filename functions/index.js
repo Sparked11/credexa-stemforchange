@@ -1,6 +1,11 @@
 'use strict';
 
 const { onRequest } = require('firebase-functions/v2/https');
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { initializeApp } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+
+initializeApp();
 
 // ── OpenRouter config ─────────────────────────────────────────────────────────
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -363,6 +368,49 @@ exports.analyzeImage = onRequest(
     } catch (err) {
       console.error('[analyzeImage] Hive call failed:', err.message);
       return res.status(502).json({ error: err.message });
+    }
+  }
+);
+
+// ── autoBanOnReports Cloud Function (App Store Guideline 1.2) ──────────────────
+// Fires whenever a report or block record is filed from the app. Counts the
+// distinct signed-in users who have flagged a given person across all their
+// messages, and once that crosses the threshold, writes a restriction record
+// using the trusted Admin SDK (bypasses Firestore rules, so a client can never
+// forge or avoid its own ban). This is what actually "ejects" a repeatedly
+// reported user — community_hub create writes are denied for a banned uid by
+// firestore.rules — rather than only hiding their content for individual
+// viewers who reported or blocked them.
+const BAN_REPORT_THRESHOLD = 3;
+
+exports.autoBanOnReports = onDocumentCreated(
+  'moderation_reports/{reportId}',
+  async (event) => {
+    const data = event.data?.data();
+    const offendingUserId = data?.offendingUserId;
+    if (!offendingUserId) return;
+
+    const db = getFirestore();
+    const banRef = db.collection('banned_users').doc(offendingUserId);
+    if ((await banRef.get()).exists) return; // already restricted
+
+    const reportsSnap = await db.collection('moderation_reports')
+      .where('offendingUserId', '==', offendingUserId)
+      .get();
+
+    const distinctComplainants = new Set();
+    reportsSnap.forEach((doc) => {
+      const reportedBy = doc.data().reportedBy;
+      if (reportedBy) distinctComplainants.add(reportedBy);
+    });
+
+    if (distinctComplainants.size >= BAN_REPORT_THRESHOLD) {
+      await banRef.set({
+        bannedAt:    FieldValue.serverTimestamp(),
+        reason:      'Automatically restricted after multiple user reports',
+        reportCount: distinctComplainants.size,
+      });
+      console.log(`[autoBan] Restricted ${offendingUserId} after ${distinctComplainants.size} reports.`);
     }
   }
 );

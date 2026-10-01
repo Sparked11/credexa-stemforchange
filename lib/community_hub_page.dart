@@ -65,12 +65,14 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   final _scroll   = ScrollController();
   final _inputFocus = FocusNode();
   StreamSubscription<List<CommunityMessage>>? _sub;
+  StreamSubscription<bool>? _banSub;
 
   List<CommunityMessage> _messages  = [];
   bool   _sending      = false;
   bool   _sendingIsAsk = false;
   bool   _moderating   = false;
   bool   _isAskMode    = true;
+  bool   _banned       = false;
   String? _error;
   bool   _loaded       = false;
 
@@ -86,6 +88,9 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   Future<void> _init() async {
     await CommunityService.loadModeration();
     if (!mounted) return;
+    _banSub = CommunityService.banStatus().listen((banned) {
+      if (mounted) setState(() => _banned = banned);
+    });
     _sub = CommunityService.messagesStream().listen(
       (msgs) {
         if (!mounted) return;
@@ -132,6 +137,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   @override
   void dispose() {
     _sub?.cancel();
+    _banSub?.cancel();
     _textCtrl.dispose();
     _inputFocus.dispose();
     _scroll.dispose();
@@ -166,6 +172,43 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
       content: Text('Thanks for reporting. This message is now hidden.'),
       behavior: SnackBarBehavior.floating,
     ));
+  }
+
+  // Lets a user immediately remove their own post from the feed for everyone
+  // (App Store Guideline 1.2). Firestore rules only allow deleting a document
+  // whose userId matches the caller, so this can never remove someone else's.
+  Future<void> _deleteOwnMessage(CommunityMessage m) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this post?'),
+        content: const Text(
+            'This removes it from the feed for everyone. This can\'t be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _messages.removeWhere((x) => x.id == m.id));
+    try {
+      await CommunityService.deleteMessage(m.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(isOfflineError(e)
+            ? kOfflineMessage
+            : 'Could not delete the post. Please try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   Future<void> _blockUser(String userId, {CommunityMessage? from}) async {
@@ -223,6 +266,14 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     final hasImg = _pendingImageBytes != null;
 
     if ((text.isEmpty && !hasImg) || _sending || _moderating) return;
+    if (_banned) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Your account is restricted from posting due to community guideline violations.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
     HapticFeedback.mediumImpact();
 
     // Text profanity check
@@ -440,6 +491,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
           onBlock:       msg.userId != null
               ? () => _blockUser(msg.userId!, from: msg)
               : null,
+          onDelete:      () => _deleteOwnMessage(msg),
         );
       },
     );
@@ -573,6 +625,33 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     final cs = Theme.of(context).colorScheme;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final busy = _sending || _moderating;
+
+    if (_banned) {
+      return Container(
+        decoration: BoxDecoration(
+          color:  cs.surface,
+          border: Border(top: BorderSide(color: cs.outlineVariant)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            20, 16, 20, MediaQuery.of(context).padding.bottom + 16),
+        child: Row(
+          children: [
+            const Icon(Icons.block_rounded, color: Colors.red, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Your account is restricted from posting here after multiple '
+                'community reports. Contact support@credexa.app if you think '
+                'this is a mistake.',
+                style: _m(size: 12, weight: FontWeight.w600,
+                    color: cs.onSurface.withValues(alpha: 0.8), height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color:  cs.surface,
@@ -762,11 +841,13 @@ class _MessageBubble extends StatefulWidget {
     required this.currentUserId,
     this.onReport,
     this.onBlock,
+    this.onDelete,
   });
   final CommunityMessage message;
   final String? currentUserId;
   final VoidCallback? onReport;
   final VoidCallback? onBlock;
+  final VoidCallback? onDelete;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -943,6 +1024,38 @@ class _MessageBubbleState extends State<_MessageBubble>
     );
   }
 
+  // Delete affordance shown only on the current user's own messages — lets
+  // them remove their own post from the feed instantly (Guideline 1.2).
+  Widget _deleteButton(Color color) {
+    return GestureDetector(
+      onTap: widget.onDelete,
+      behavior: HitTestBehavior.opaque,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.delete_outline_rounded,
+                  size: 15, color: color.withValues(alpha: 0.9)),
+              const SizedBox(width: 3),
+              Text(
+                'Delete',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: color.withValues(alpha: 0.9),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _sheetAction(BuildContext ctx, IconData icon, String label,
       Color color, VoidCallback onTap) {
     return InkWell(
@@ -999,7 +1112,9 @@ class _MessageBubbleState extends State<_MessageBubble>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (!_isOwn)
+                  if (_isOwn)
+                    _deleteButton(cs.onSurface.withValues(alpha: 0.7))
+                  else
                     _moderationButton(cs.onSurface.withValues(alpha: 0.7)),
                   Text('Anonymous',
                       style: _m(size: 11, weight: FontWeight.w700,
@@ -1104,7 +1219,10 @@ class _MessageBubbleState extends State<_MessageBubble>
                   ],
                   Text(widget.message.authorLabel,
                       style: _m(size: 11, weight: FontWeight.w800, color: color)),
-                  if (!_isOwn) _moderationButton(color),
+                  if (_isOwn)
+                    _deleteButton(color)
+                  else
+                    _moderationButton(color),
                 ],
               ),
               const SizedBox(height: 4),

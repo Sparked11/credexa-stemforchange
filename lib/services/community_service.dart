@@ -97,6 +97,28 @@ class CommunityService {
     await p.setStringList(_kBlockedKey, _blockedUsers.toList());
   }
 
+  /// Deletes a message the current user posted, removing it from the feed for
+  /// everyone immediately (App Store Guideline 1.2: users must be able to
+  /// remove their own posts). Firestore rules only allow this when the
+  /// document's `userId` matches the caller, so this can't delete anyone else's.
+  static Future<void> deleteMessage(String messageId) =>
+      _col.doc(messageId).delete();
+
+  /// Live status of the current account's community restriction, if any. A
+  /// restriction is written server-side by the `autoBanOnReports` Cloud
+  /// Function once enough distinct users have reported the same person — this
+  /// is the real "eject the user" mechanism, enforced by Firestore rules on
+  /// every future post attempt, not just a per-viewer local block.
+  static Stream<bool> banStatus() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return Stream.value(false);
+    return FirebaseFirestore.instance
+        .collection('banned_users')
+        .doc(uid)
+        .snapshots()
+        .map((snap) => snap.exists);
+  }
+
   /// Flags a message as objectionable. Records the reporter (so double-reports
   /// don't inflate the count) and bumps the report counter; once
   /// [_kReportHideThreshold] distinct users report it, [messagesStream] hides it
