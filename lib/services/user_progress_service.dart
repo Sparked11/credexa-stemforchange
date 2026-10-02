@@ -323,6 +323,16 @@ class UserProgressService {
     await p.setString(_k('cached_quest_json'), jsonEncode(quest));
   }
 
+  /// Debug-only: clears today's "already shown" and cached-quest state so the
+  /// Daily Quest banner can be forced to appear again immediately, without
+  /// waiting for the next calendar day or reinstalling the app.
+  static Future<void> debugResetDailyQuest() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_k('last_quest_date'));
+    await p.remove(_k('cached_quest_date'));
+    await p.remove(_k('cached_quest_json'));
+  }
+
   static Future<void> recordQuestResult({required bool correct}) async {
     unawaited(NotificationService.skipToday());
     final s = stats.value;

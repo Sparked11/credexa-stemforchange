@@ -26,6 +26,7 @@ import 'profile_page.dart';
 import 'services/profile_service.dart';
 import 'services/user_progress_service.dart';
 import 'services/quest_service.dart';
+import 'models/quest_item.dart';
 import 'theme/app_tokens.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/hero_3d_stage.dart';
@@ -260,7 +261,7 @@ class _MainAppState extends State<MainApp>
   bool   _questMinimized = false;
   bool            _showCredexaAd  = false;
   DateTime?       _lastAdShown;
-  Map<String, dynamic>? _dailyQuestData;
+  QuestItem? _dailyQuestData;
 
   @override
   void initState() {
@@ -301,23 +302,34 @@ class _MainAppState extends State<MainApp>
     if (!shouldShow || !mounted) return;
 
     // Use cached quest for today if already generated.
-    var quest = await UserProgressService.getCachedQuest();
-    if (quest == null) {
+    final cachedJson = await UserProgressService.getCachedQuest();
+    QuestItem quest;
+    if (cachedJson != null) {
+      quest = QuestItem.fromJson(cachedJson);
+    } else {
       try {
-        // Local bank is instant and works offline; AI is the fallback.
-        quest = QuestService.getLocalQuest();
+        quest = await QuestService.getAdaptiveDailyQuest();
       } catch (_) {
-        try {
-          quest = await QuestService.generateQuest();
-        } catch (_) {
-          return;
-        }
+        return;
       }
-      await UserProgressService.cacheQuest(quest);
+      await UserProgressService.cacheQuest(quest.toJson());
     }
     if (!mounted) return;
     setState(() { _dailyQuestData = quest; _showDailyQuest = true; });
     _questSlideCtrl.forward();
+  }
+
+  /// Debug-only (hidden in release builds): clears today's "already shown"
+  /// state and reloads a fresh adaptive quest immediately, so the Daily Quest
+  /// banner can be tested repeatedly without waiting a day or reinstalling.
+  Future<void> _debugForceDailyQuest() async {
+    HapticFeedback.mediumImpact();
+    await UserProgressService.debugResetDailyQuest();
+    if (_showDailyQuest || _questMinimized) {
+      setState(() { _showDailyQuest = false; _questMinimized = false; });
+      _questSlideCtrl.reset();
+    }
+    await _tryLoadDailyQuest();
   }
 
   Future<void> _dismissDailyQuest() async {
@@ -555,11 +567,12 @@ class _MainAppState extends State<MainApp>
                     if (_showDailyQuest &&
                         _dailyQuestData != null &&
                         !_questMinimized)
-                      _DailyQuestBanner(
-                        questData: _dailyQuestData!,
+                      DailyQuestBanner(
+                        quest: _dailyQuestData!,
                         slideCtrl: _questSlideCtrl,
                         onMinimize: _minimizeQuest,
                         onAnswered: (bool correct) async {
+                          await QuestService.recordAnswer(correct);
                           await UserProgressService.recordQuestResult(
                               correct: correct);
                           await _dismissDailyQuest();
@@ -568,6 +581,39 @@ class _MainAppState extends State<MainApp>
                     if (_showDailyQuest && _questMinimized)
                       _QuestFloatingBadge(
                           onTap: _expandQuest, bottomInset: navSpace),
+                    if (kDebugMode)
+                      Positioned(
+                        top: navBottom > 0 ? 8 : MediaQuery.of(context).padding.top + 8,
+                        right: 8,
+                        child: GestureDetector(
+                          onTap: _debugForceDailyQuest,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bug_report_rounded,
+                                    size: 14, color: Colors.amber),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Force Quest',
+                                  style: TextStyle(
+                                    fontFamily: 'Montserrat',
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     if (_showCredexaAd)
                       _CredexaPlusAd(
                         onDismiss: () {
@@ -1735,33 +1781,53 @@ class _ProblemDefinitionPage extends StatelessWidget {
 //  DAILY QUEST BANNER — slides down from top once per day
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _DailyQuestBanner extends StatefulWidget {
-  const _DailyQuestBanner({
-    required this.questData,
+const _kDifficultyLabels = ['Beginner', 'Easy', 'Medium', 'Hard', 'Expert'];
+
+Color _questFormatColor(QuestFormat f) => switch (f) {
+      QuestFormat.post => const Color(0xFF0EA5E9),
+      QuestFormat.headline => const Color(0xFFF59E0B),
+      QuestFormat.quote => const Color(0xFF8B5CF6),
+      QuestFormat.chart => const Color(0xFF14B8A6),
+    };
+
+IconData _questFormatIcon(QuestFormat f) => switch (f) {
+      QuestFormat.post => Icons.chat_bubble_rounded,
+      QuestFormat.headline => Icons.newspaper_rounded,
+      QuestFormat.quote => Icons.format_quote_rounded,
+      QuestFormat.chart => Icons.bar_chart_rounded,
+    };
+
+String? _platformAsset(String? platform) => switch (platform) {
+      'twitter' => 'assets/Xicon.png',
+      'instagram' => 'assets/Instagramicon.png',
+      'tiktok' => 'assets/TikTokicon.png',
+      'facebook' => 'assets/Facebookicon.png',
+      'youtube' => 'assets/YouTubeicon.png',
+      _ => null,
+    };
+
+class DailyQuestBanner extends StatefulWidget {
+  const DailyQuestBanner({
+    super.key,
+    required this.quest,
     required this.slideCtrl,
     required this.onMinimize,
     required this.onAnswered,
   });
-  final Map<String, dynamic> questData;
+  final QuestItem quest;
   final AnimationController slideCtrl;
   final VoidCallback onMinimize;
   final void Function(bool correct) onAnswered;
 
   @override
-  State<_DailyQuestBanner> createState() => _DailyQuestBannerState();
+  State<DailyQuestBanner> createState() => DailyQuestBannerState();
 }
 
-class _DailyQuestBannerState extends State<_DailyQuestBanner> {
+class DailyQuestBannerState extends State<DailyQuestBanner> {
   int?  _selected;
   bool  _revealed = false;
 
-  int get _correctIndex =>
-      (widget.questData['correct_index'] as num?)?.toInt() ?? 0;
-  List<String> get _options =>
-      (widget.questData['options'] as List<dynamic>?)
-          ?.map((e) => e.toString())
-          .toList() ??
-      [];
+  QuestItem get _q => widget.quest;
 
   void _pick(int i) {
     if (_revealed) return;
@@ -1771,6 +1837,11 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _questFormatColor(_q.format);
+    final correct = _selected == _q.correctIndex;
+
     final slideAnim = Tween<Offset>(
       begin: const Offset(0, -1),
       end: Offset.zero,
@@ -1787,7 +1858,7 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
           // Scrim
           GestureDetector(
             onTap: _revealed ? null : widget.onMinimize,
-            child: Container(color: Colors.black.withValues(alpha: 0.45)),
+            child: Container(color: Colors.black.withValues(alpha: 0.55)),
           ),
           // Card
           SafeArea(
@@ -1796,315 +1867,569 @@ class _DailyQuestBannerState extends State<_DailyQuestBanner> {
               child: LayoutBuilder(
                 builder: (context, constraints) => ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxHeight: (MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - 24).clamp(400.0, 640.0),
+                    maxHeight: (MediaQuery.of(context).size.height -
+                            MediaQuery.of(context).padding.top - 24)
+                        .clamp(400.0, 680.0),
                   ),
                   child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 32,
-                      offset: const Offset(0, 8),
+                    decoration: BoxDecoration(
+                      color: cs.surface,
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: isDark ? 0.08 : 0.9)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: accent.withValues(alpha: isDark ? 0.22 : 0.16),
+                          blurRadius: 36,
+                          offset: const Offset(0, 14),
+                        ),
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ── Header ──────────────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 16, 12, 0),
-                      child: Row(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFEF3C7),
-                              borderRadius: BorderRadius.circular(100),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
+                          // ── Header ──────────────────────────────────────────
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 16, 12, 0),
+                            child: Row(
                               children: [
-                                Text('📚', style: TextStyle(fontSize: 12)),
-                                SizedBox(width: 5),
-                                Text(
-                                  'DAILY QUEST',
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: accent.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(100),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.menu_book_rounded,
+                                          size: 13, color: accent),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        'DAILY QUEST',
+                                        style: TextStyle(
+                                          fontFamily: 'Montserrat',
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                          color: accent,
+                                          letterSpacing: 0.8,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Tooltip(
+                                  message: _kDifficultyLabels[_q.difficulty - 1],
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      for (var i = 0; i < 5; i++)
+                                        Container(
+                                          width: 5,
+                                          height: 5,
+                                          margin: const EdgeInsets.only(right: 3),
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: i < _q.difficulty
+                                                ? accent
+                                                : cs.onSurface.withValues(alpha: 0.15),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                const Spacer(),
+                                GestureDetector(
+                                  onTap: widget.onMinimize,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: cs.onSurface.withValues(alpha: 0.06),
+                                      borderRadius: BorderRadius.circular(100),
+                                    ),
+                                    child: Icon(Icons.close_rounded,
+                                        size: 18,
+                                        color: cs.onSurface.withValues(alpha: 0.55)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // ── Format-specific content card ─────────────────────
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                            child: QuestContentCard(quest: _q, accent: accent),
+                          ),
+                          const SizedBox(height: 6),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Text(
+                              _q.question,
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: cs.onSurface,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          // ── Options ───────────────────────────────────────────
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                            child: Column(
+                              children: List.generate(_q.options.length, (i) {
+                                const letters = ['A', 'B', 'C', 'D'];
+
+                                Color bg = cs.onSurface.withValues(alpha: 0.04);
+                                Color border = cs.onSurface.withValues(alpha: 0.10);
+                                Color textColor = cs.onSurface.withValues(alpha: 0.85);
+                                Color circleColor = accent;
+                                Widget circleChild = Text(
+                                  letters[i % 4],
                                   style: TextStyle(
                                     fontFamily: 'Montserrat',
                                     fontSize: 11,
                                     fontWeight: FontWeight.w800,
-                                    color: Color(0xFF92400E),
-                                    letterSpacing: 0.8,
+                                    color: circleColor,
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: widget.onMinimize,
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surface,
-                                borderRadius: BorderRadius.circular(100),
-                              ),
-                              child: Icon(Icons.close_rounded,
-                                  size: 18, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+                                );
 
-                    // ── Post text (styled as social card) ────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0xFFF0F4FF), Color(0xFFF5F0FF)],
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFFD4CCFF), width: 1.5),
-                        ),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF6366F1).withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      widget.questData['topic_emoji'] as String? ?? '📱',
-                                      style: const TextStyle(fontSize: 18),
+                                if (_revealed) {
+                                  if (i == _q.correctIndex) {
+                                    bg = const Color(0xFF22C55E).withValues(alpha: 0.12);
+                                    border = const Color(0xFF22C55E);
+                                    textColor = isDark
+                                        ? const Color(0xFF86EFAC)
+                                        : const Color(0xFF15803D);
+                                    circleColor = const Color(0xFF22C55E);
+                                    circleChild = const Icon(Icons.check_rounded,
+                                        color: Color(0xFF22C55E), size: 14);
+                                  } else if (i == _selected) {
+                                    bg = const Color(0xFFEF4444).withValues(alpha: 0.12);
+                                    border = const Color(0xFFEF4444);
+                                    textColor = isDark
+                                        ? const Color(0xFFFCA5A5)
+                                        : const Color(0xFFB91C1C);
+                                    circleColor = const Color(0xFFEF4444);
+                                    circleChild = const Icon(Icons.close_rounded,
+                                        color: Color(0xFFEF4444), size: 14);
+                                  } else {
+                                    textColor = cs.onSurface.withValues(alpha: 0.45);
+                                  }
+                                } else if (_selected == i) {
+                                  bg = accent.withValues(alpha: 0.12);
+                                  border = accent;
+                                }
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: GestureDetector(
+                                    onTap: () => _pick(i),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 220),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 11),
+                                      decoration: BoxDecoration(
+                                        color: bg,
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(color: border, width: 1.5),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          AnimatedContainer(
+                                            duration: const Duration(milliseconds: 220),
+                                            width: 26,
+                                            height: 26,
+                                            margin: const EdgeInsets.only(top: 1),
+                                            decoration: BoxDecoration(
+                                              color: circleColor.withValues(alpha: 0.14),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Center(child: circleChild),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              _q.options[i],
+                                              style: TextStyle(
+                                                fontFamily: 'Montserrat',
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w600,
+                                                color: textColor,
+                                                height: 1.4,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
+                                );
+                              }),
+                            ),
+                          ),
+
+                          // ── Explanation + Got it (after answer) ───────────────
+                          if (_revealed) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(18, 4, 18, 0),
+                              child: Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: (correct
+                                          ? const Color(0xFF22C55E)
+                                          : accent)
+                                      .withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(14),
                                 ),
-                                const SizedBox(width: 10),
-                                Column(
+                                child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: const [
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          correct
+                                              ? Icons.emoji_events_rounded
+                                              : Icons.lightbulb_rounded,
+                                          size: 15,
+                                          color: correct
+                                              ? const Color(0xFF22C55E)
+                                              : accent,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          _q.technique,
+                                          style: TextStyle(
+                                            fontFamily: 'Montserrat',
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.3,
+                                            color: correct
+                                                ? const Color(0xFF22C55E)
+                                                : accent,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
                                     Text(
-                                      'Sample Post',
+                                      _q.explanation,
                                       style: TextStyle(
                                         fontFamily: 'Montserrat',
                                         fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF1E293B),
-                                      ),
-                                    ),
-                                    Text(
-                                      'Spot the manipulation 👇',
-                                      style: TextStyle(
-                                        fontFamily: 'Montserrat',
-                                        fontSize: 11,
                                         fontWeight: FontWeight.w500,
-                                        color: Color(0xFF94A3B8),
+                                        color: cs.onSurface.withValues(alpha: 0.85),
+                                        height: 1.5,
                                       ),
                                     ),
                                   ],
                                 ),
-                              ],
+                              ),
                             ),
-                            const SizedBox(height: 10),
-                            Text(
-                              widget.questData['post_text'] ?? '',
-                              style: const TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF1E293B),
-                                height: 1.5,
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+                              child: GlassButton(
+                                height: 50,
+                                radius: 14,
+                                accent: correct
+                                    ? const Color(0xFF22C55E)
+                                    : accent,
+                                icon: correct
+                                    ? Icons.emoji_events_rounded
+                                    : Icons.lightbulb_rounded,
+                                label: correct
+                                    ? 'Nice work! +15 pts'
+                                    : 'Got it! Keep learning +5 pts',
+                                fontSize: 13,
+                                onTap: () => widget.onAnswered(correct),
                               ),
                             ),
                           ],
-                        ),
+                          const SizedBox(height: 16),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-                    // ── Options ──────────────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Column(
-                        children: List.generate(_options.length, (i) {
-                          const letters = ['A', 'B', 'C', 'D'];
-                          const letterColors = [
-                            Color(0xFF6366F1), // indigo
-                            Color(0xFF8B5CF6), // purple
-                            Color(0xFFF59E0B), // amber
-                            Color(0xFFEC4899), // pink
-                          ];
+/// Renders the quest's fabricated media — a stylized mockup, never a real
+/// photo or screenshot — in whichever of the four formats the item uses.
+class QuestContentCard extends StatelessWidget {
+  const QuestContentCard({super.key, required this.quest, required this.accent});
+  final QuestItem quest;
+  final Color accent;
 
-                          Color bg        = Colors.white;
-                          Color border    = const Color(0xFFE2E8F0);
-                          Color textColor = const Color(0xFF1E293B);
-                          Color circleColor = letterColors[i % 4];
-                          Widget circleChild = Text(
-                            letters[i % 4],
-                            style: TextStyle(
-                              fontFamily: 'Montserrat',
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: circleColor,
-                            ),
-                          );
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-                          if (_revealed) {
-                            if (i == _correctIndex) {
-                              bg          = const Color(0xFFEFFFF5);
-                              border      = const Color(0xFF22C55E);
-                              textColor   = const Color(0xFF15803D);
-                              circleColor = const Color(0xFF22C55E);
-                              circleChild = const Icon(Icons.check_rounded,
-                                  color: Color(0xFF22C55E), size: 14);
-                            } else if (i == _selected) {
-                              bg          = const Color(0xFFFFEDE8);
-                              border      = const Color(0xFFEF4444);
-                              textColor   = const Color(0xFFB91C1C);
-                              circleColor = const Color(0xFFEF4444);
-                              circleChild = const Icon(Icons.close_rounded,
-                                  color: Color(0xFFEF4444), size: 14);
-                            } else {
-                              textColor = const Color(0xFF94A3B8);
-                            }
-                          } else if (_selected == i) {
-                            bg     = const Color(0xFFEFF6FF);
-                            border = letterColors[i % 4];
-                          }
+    Widget frame(Widget child) => Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? cs.onSurface.withValues(alpha: 0.05) : accent.withValues(alpha: 0.055),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: accent.withValues(alpha: 0.25), width: 1.3),
+          ),
+          child: child,
+        );
 
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: GestureDetector(
-                              onTap: () => _pick(i),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 220),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 11),
-                                decoration: BoxDecoration(
-                                  color: bg,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: border, width: 1.5),
-                                ),
-                                child: Row(
-                                  children: [
-                                    AnimatedContainer(
-                                      duration: const Duration(milliseconds: 220),
-                                      width: 28,
-                                      height: 28,
-                                      decoration: BoxDecoration(
-                                        color: circleColor.withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Center(child: circleChild),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        _options[i],
-                                        style: TextStyle(
-                                          fontFamily: 'Montserrat',
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: textColor,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
+    switch (quest.format) {
+      case QuestFormat.post:
+        final asset = _platformAsset(quest.postPlatform);
+        return frame(Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  padding: EdgeInsets.all(asset != null ? 6 : 0),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: accent.withValues(alpha: 0.3)),
+                  ),
+                  child: asset != null
+                      ? Image.asset(asset, fit: BoxFit.contain)
+                      : Icon(_questFormatIcon(quest.format),
+                          size: 16, color: accent),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    quest.postHandle ?? '@anonymous',
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: cs.onSurface.withValues(alpha: 0.75),
                     ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              quest.postText ?? '',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ));
 
-                    // ── Explanation + Got it (after answer) ──────────────────
-                    if (_revealed) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 4, 18, 0),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _selected == _correctIndex
-                                ? const Color(0xFFEFFFF5)
-                                : const Color(0xFFFFF7ED),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _selected == _correctIndex ? '🎉' : '💡',
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  widget.questData['explanation']?.toString() ?? '',
-                                  style: TextStyle(
-                                    fontFamily: 'Montserrat',
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                    color: _selected == _correctIndex
-                                        ? const Color(0xFF15803D)
-                                        : const Color(0xFF92400E),
-                                    height: 1.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+      case QuestFormat.headline:
+        return frame(Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.newspaper_rounded, size: 15, color: accent),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    (quest.headlineOutlet ?? '').toUpperCase(),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      color: accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              quest.headlineText ?? '',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: cs.onSurface,
+                height: 1.3,
+              ),
+            ),
+          ],
+        ));
+
+      case QuestFormat.quote:
+        return frame(Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.format_quote_rounded, size: 26, color: accent.withValues(alpha: 0.5)),
+            const SizedBox(height: 2),
+            Text(
+              quest.quoteText ?? '',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                fontStyle: FontStyle.italic,
+                color: cs.onSurface,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '— ${quest.quoteAttribution ?? 'unknown'}',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+          ],
+        ));
+
+      case QuestFormat.chart:
+        final chart = quest.chart;
+        if (chart == null) return frame(const SizedBox(height: 40));
+        return frame(Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bar_chart_rounded, size: 15, color: accent),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    chart.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            MiniBarChart(chart: chart, accent: accent),
+          ],
+        ));
+    }
+  }
+}
+
+/// A deliberately-rendered-to-spec bar chart: the axis truncation or
+/// cherry-picked range baked into [QuestChart] shows up exactly as it would
+/// in a real misleading chart, since the bars are scaled against [axisMin].
+class MiniBarChart extends StatelessWidget {
+  const MiniBarChart({super.key, required this.chart, required this.accent});
+  final QuestChart chart;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    const chartHeight = 92.0;
+    final maxVal = chart.series.isEmpty
+        ? 1.0
+        : chart.series.reduce((a, b) => a > b ? a : b);
+    final span = (maxVal - chart.axisMin).abs() < 0.001
+        ? 1.0
+        : (maxVal - chart.axisMin) * 1.15;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: chartHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var i = 0; i < chart.series.length; i++) ...[
+                if (i > 0) const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        '${chart.series[i].toStringAsFixed(chart.series[i] % 1 == 0 ? 0 : 1)}${chart.unit}',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          color: cs.onSurface.withValues(alpha: 0.6),
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-                        child: GlassButton(
-                          height: 50,
-                          radius: 14,
-                          accent: _selected == _correctIndex
-                              ? const Color(0xFF22C55E)
-                              : const Color(0xFF6366F1),
-                          icon: _selected == _correctIndex
-                              ? Icons.emoji_events_rounded
-                              : Icons.lightbulb_rounded,
-                          label: _selected == _correctIndex
-                              ? 'Nice work! +15 pts'
-                              : 'Got it! Keep learning +5 pts',
-                          fontSize: 13,
-                          onTap: () =>
-                              widget.onAnswered(_selected == _correctIndex),
+                      const SizedBox(height: 3),
+                      Container(
+                        height: (((chart.series[i] - chart.axisMin) / span) *
+                                (chartHeight - 20))
+                            .clamp(3.0, chartHeight - 20),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.75),
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(5)),
                         ),
                       ),
                     ],
-                    const SizedBox(height: 16),
-                  ],
-                ),       // Column
-                ),       // SingleChildScrollView
-              ),         // Container
-                ),       // ConstrainedBox
-              ),         // LayoutBuilder
-            ),           // Padding
-          ),             // SafeArea
-        ],
-      ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (var i = 0; i < chart.xLabels.length; i++) ...[
+              if (i > 0) const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  chart.xLabels[i],
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
     );
   }
 }

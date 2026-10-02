@@ -1,17 +1,133 @@
 import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../app_config.dart';
-import '../data/daily_quest_bank.dart';
+import '../models/quest_item.dart';
 
-/// Generates AI-powered media-literacy quest content via OpenRouter.
-///
-/// Used by the Learning Quests feature. Each quest is a realistic social media
-/// post that demonstrates exactly one manipulation technique, paired with
-/// multiple-choice options and an explanation.
+/// Serves the Daily Quest banner: a bundled bank of ~170 hand-written items
+/// across 5 difficulty tiers, selected adaptively based on the user's recent
+/// accuracy, with an AI-generated fallback if the bundled bank can't be read.
 class QuestService {
   static const _kApiKey = kOpenRouterApiKey;
   static const _kUrl = 'https://openrouter.ai/api/v1/chat/completions';
   static const _kModel = 'openai/gpt-4o-mini'; // use mini for quests (cost-efficient)
+  static const _kAssetPath = 'assets/quests/daily_quests.json';
+
+  static const _kTierKey = 'daily_quest_tier';
+  static const _kSeenKeyPrefix = 'daily_quest_seen_tier_';
+  static const _kRollingKey = 'daily_quest_rolling';
+
+  static List<QuestItem>? _bank;
+
+  static Future<List<QuestItem>> _loadBank() async {
+    final cached = _bank;
+    if (cached != null) return cached;
+    try {
+      final raw = await rootBundle.loadString(_kAssetPath);
+      final list = jsonDecode(raw) as List<dynamic>;
+      final parsed = list
+          .map((e) => QuestItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+      _bank = parsed;
+      return parsed;
+    } catch (_) {
+      _bank = const [];
+      return const [];
+    }
+  }
+
+  /// The user's current adaptive difficulty tier (1 = beginner, 5 = expert).
+  /// Starts at 2 so a brand-new user isn't dropped straight into hard content.
+  static Future<int> currentTier() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_kTierKey) ?? 2).clamp(1, 5);
+  }
+
+  /// Feeds a quest result into the rolling-accuracy window (last 5 answers)
+  /// and adjusts the tier: 3+ recent answers at >=80% accuracy moves up a
+  /// tier; <=34% moves down a tier. Otherwise the tier holds steady, so one
+  /// lucky or unlucky guess doesn't swing the difficulty.
+  static Future<void> recordAnswer(bool correct) async {
+    final p = await SharedPreferences.getInstance();
+    final rolling = (p.getStringList(_kRollingKey) ?? <String>[])
+      ..add(correct ? '1' : '0');
+    while (rolling.length > 5) {
+      rolling.removeAt(0);
+    }
+    await p.setStringList(_kRollingKey, rolling);
+
+    var tier = (p.getInt(_kTierKey) ?? 2).clamp(1, 5);
+    if (rolling.length >= 3) {
+      final accuracy =
+          rolling.map(int.parse).reduce((a, b) => a + b) / rolling.length;
+      if (accuracy >= 0.8) {
+        tier = (tier + 1).clamp(1, 5);
+      } else if (accuracy <= 0.34) {
+        tier = (tier - 1).clamp(1, 5);
+      }
+    }
+    await p.setInt(_kTierKey, tier);
+  }
+
+  /// Picks today's quest at the user's current tier, cycling through every
+  /// item at that tier before any repeat. Never throws — falls back to an
+  /// AI-generated quest if the bundled bank is somehow unavailable, and to a
+  /// nearby tier if a tier happens to be empty.
+  static Future<QuestItem> getAdaptiveDailyQuest() async {
+    final bank = await _loadBank();
+    if (bank.isEmpty) {
+      try {
+        return QuestItem.fromLegacyAiMap(await generateQuest());
+      } catch (_) {
+        return _placeholderQuest();
+      }
+    }
+
+    final tier = await currentTier();
+    var pool = bank.where((q) => q.difficulty == tier).toList();
+    if (pool.isEmpty) pool = bank;
+
+    final p = await SharedPreferences.getInstance();
+    final seenKey = '$_kSeenKeyPrefix$tier';
+    var seen = (p.getStringList(seenKey) ?? <String>[]).toSet();
+    var unseen = pool.where((q) => !seen.contains(q.id)).toList();
+    if (unseen.isEmpty) {
+      seen = {};
+      unseen = pool;
+    }
+
+    final dayIndex = DateTime.now().difference(DateTime(2024, 1, 1)).inDays;
+    final picked = unseen[dayIndex.abs() % unseen.length];
+    seen.add(picked.id);
+    await p.setStringList(seenKey, seen.toList());
+    return picked;
+  }
+
+  static QuestItem _placeholderQuest() => const QuestItem(
+        id: 'placeholder',
+        format: QuestFormat.post,
+        difficulty: 2,
+        category: 'General',
+        technique: 'Loaded Language',
+        techniqueDefinition:
+            'Using emotionally charged words instead of neutral ones to steer your opinion.',
+        question: 'What technique is this post using?',
+        options: [
+          'It uses emotionally loaded words to push a reaction.',
+          'It cites a credible, named source.',
+          'It presents balanced evidence on both sides.',
+          'It asks a neutral, open-ended question.',
+        ],
+        correctIndex: 0,
+        explanation:
+            'Loaded Language swaps neutral words for emotionally charged ones to influence '
+            'how you feel about a claim before you\'ve evaluated the facts.',
+        postText:
+            'Check back tomorrow for a new daily quest — today\'s couldn\'t load.',
+        postHandle: '@credexa',
+        postPlatform: 'twitter',
+      );
 
   static String _systemPrompt() => '''
 You are a media-literacy educator making quick daily quiz cards for teenagers.
@@ -20,14 +136,12 @@ Generate ONE punchy social media post that uses exactly ONE manipulation techniq
 STRICT RULES:
 - post_text: 1-2 sentences MAX. Under 25 words. Sound like a real tweet or caption. Can include 1 hashtag or emoji.
 - options: exactly 4 short labels. Each option is 2-4 words ONLY — no long phrases.
-- topic_emoji: a single emoji that represents the post topic (e.g. 🌍 environment, 🏛️ politics, 💊 health, 📱 tech, ⚽ sports).
 - explanation: 1-2 short sentences only.
 
 Return ONLY valid JSON (no markdown):
 {
   "post_text": "<1-2 sentence post, max 25 words>",
   "technique": "<exact technique name>",
-  "topic_emoji": "<single emoji>",
   "options": ["<2-4 word label>", "<2-4 word label>", "<2-4 word label>", "<2-4 word label>"],
   "correct_index": <0-3>,
   "explanation": "<1-2 short sentences>",
@@ -43,15 +157,9 @@ Appeal to Tradition.
 Options must include the correct technique and 3 plausible-but-wrong alternatives.
 correct_index is the 0-based index of the correct answer in options.''';
 
-  /// Returns a quest from the local 100-question bank, selected by day of year.
-  /// Never fails — no network required.
-  static Map<String, dynamic> getLocalQuest() {
-    final dayIndex =
-        DateTime.now().difference(DateTime(2024, 1, 1)).inDays;
-    return DailyQuestBank.getForDay(dayIndex);
-  }
-
-  /// Generates a single quest (social post + 4 options + answer + explanation).
+  /// Generates a single quest (social post + 4 options + answer + explanation)
+  /// via the AI, used only as a last-resort fallback if the bundled quest
+  /// bank asset can't be read.
   ///
   /// Returns a [Map] with: post_text, options (`List<String>`), correct_index,
   /// explanation, technique, difficulty, topic.
@@ -105,8 +213,6 @@ correct_index is the 0-based index of the correct answer in options.''';
 
     final quest = jsonDecode(clean) as Map<String, dynamic>;
 
-    // Normalize and guard the returned fields with safe defaults so callers
-    // never receive a partially-shaped map.
     final rawOptions = quest['options'];
     final options = rawOptions is List
         ? rawOptions.map((e) => e.toString()).toList()
@@ -120,7 +226,6 @@ correct_index is the 0-based index of the correct answer in options.''';
     return {
       'post_text':   (quest['post_text']   as String?)?.trim() ?? '',
       'technique':   (quest['technique']   as String?)?.trim() ?? '',
-      'topic_emoji': (quest['topic_emoji'] as String?)?.trim() ?? '📱',
       'options':     options,
       'correct_index':
           (correctIndex >= 0 && correctIndex < options.length) ? correctIndex : 0,
