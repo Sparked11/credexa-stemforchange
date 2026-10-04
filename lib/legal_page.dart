@@ -9,7 +9,7 @@ class LegalPage extends StatelessWidget {
   const LegalPage({super.key});
 
   static const _effectiveDate = 'July 29, 2026';
-  static const _contactEmail  = 'support@credexa.app';
+  static const _contactEmail  = 'credexa.support@gmail.com';
 
   @override
   Widget build(BuildContext context) {

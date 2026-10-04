@@ -43,6 +43,10 @@ import 'services/achievement_service.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 //  APP THEME SERVICE  — global dark / light mode with persistence
 // ─────────────────────────────────────────────────────────────────────────────
+// Election Integrity is hidden from users until its data is verified.
+// Set to true to show it again in the home grid and the More menu.
+const bool kShowElectionIntegrity = false;
+
 class AppThemeService {
   AppThemeService._();
 
@@ -319,19 +323,6 @@ class _MainAppState extends State<MainApp>
     _questSlideCtrl.forward();
   }
 
-  /// Debug-only (hidden in release builds): clears today's "already shown"
-  /// state and reloads a fresh adaptive quest immediately, so the Daily Quest
-  /// banner can be tested repeatedly without waiting a day or reinstalling.
-  Future<void> _debugForceDailyQuest() async {
-    HapticFeedback.mediumImpact();
-    await UserProgressService.debugResetDailyQuest();
-    if (_showDailyQuest || _questMinimized) {
-      setState(() { _showDailyQuest = false; _questMinimized = false; });
-      _questSlideCtrl.reset();
-    }
-    await _tryLoadDailyQuest();
-  }
-
   Future<void> _dismissDailyQuest() async {
     await _questSlideCtrl.reverse();
     if (mounted) setState(() { _showDailyQuest = false; _questMinimized = false; });
@@ -581,39 +572,6 @@ class _MainAppState extends State<MainApp>
                     if (_showDailyQuest && _questMinimized)
                       _QuestFloatingBadge(
                           onTap: _expandQuest, bottomInset: navSpace),
-                    if (kDebugMode)
-                      Positioned(
-                        top: navBottom > 0 ? 8 : MediaQuery.of(context).padding.top + 8,
-                        right: 8,
-                        child: GestureDetector(
-                          onTap: _debugForceDailyQuest,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.55),
-                              borderRadius: BorderRadius.circular(100),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.bug_report_rounded,
-                                    size: 14, color: Colors.amber),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Force Quest',
-                                  style: TextStyle(
-                                    fontFamily: 'Montserrat',
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
                     if (_showCredexaAd)
                       _CredexaPlusAd(
                         onDismiss: () {
@@ -1251,17 +1209,19 @@ class _HomeDashboardPageState extends State<HomeDashboardPage>
       ],
     ];
 
-    final items = [...pages[0], ...pages[1]];
+    final items = [...pages[0], ...pages[1]]
+        .where((f) => kShowElectionIntegrity || f.title != 'Election Integrity')
+        .toList();
 
     void tapFeature(int index) {
       HapticFeedback.lightImpact();
-      switch (index) {
-        case 0: widget.onNavigate(NavigationTab.explain);
-        case 1: widget.onNavigate(NavigationTab.debiaseed);
-        case 2: widget.onNavigate(NavigationTab.newsFeed);
-        case 3: widget.onNavigateMore?.call('learn');
-        case 4: widget.onNavigateMore?.call('election');
-        case 5: widget.onNavigateMore?.call('trust_lens');
+      switch (items[index].title) {
+        case 'Explain Why': widget.onNavigate(NavigationTab.explain);
+        case 'De-Bias': widget.onNavigate(NavigationTab.debiaseed);
+        case 'News Feed': widget.onNavigate(NavigationTab.newsFeed);
+        case 'Community Hub': widget.onNavigateMore?.call('learn');
+        case 'Election Integrity': widget.onNavigateMore?.call('election');
+        case 'Trust Lens': widget.onNavigateMore?.call('trust_lens');
       }
     }
 
@@ -3457,8 +3417,9 @@ class _MoreNavItem extends StatelessWidget {
       elevation: 12,
       color: Theme.of(context).colorScheme.surface,
       itemBuilder: (context) => [
-        _item(context, 'election', Icons.how_to_vote_rounded,
-            const Color(0xFF1D4ED8), 'Election Integrity'),
+        if (kShowElectionIntegrity)
+          _item(context, 'election', Icons.how_to_vote_rounded,
+              const Color(0xFF1D4ED8), 'Election Integrity'),
         _item(context, 'learn', Icons.forum_rounded, const Color(0xFF6366F1),
             'Community Hub'),
         _item(context, 'trust_lens', Icons.videocam_rounded,

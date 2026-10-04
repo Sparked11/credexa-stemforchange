@@ -6,10 +6,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
+import 'community_safety_page.dart';
 import 'models/community_message.dart';
 import 'services/community_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/profile_service.dart';
+import 'theme/app_tokens.dart';
 import 'widgets/app_widgets.dart';
 import 'widgets/glass_button.dart';
 
@@ -33,6 +35,10 @@ TextStyle _m({
 const _kAccent     = Color(0xFF22C55E);
 const _kReplyColor = Color(0xFF3B82F6);
 const _kAiColor    = Color(0xFF6366F1);
+// AI responses are orange; other people's questions are white (ink-coloured
+// labels on a white bubble). The user's own posts are always green on the right.
+const _kAiOrange   = Color(0xFFF97316);
+const _kQuestionInk = Color(0xFF334155);
 
 IconData _typeIcon(MessageType type) {
   switch (type) {
@@ -46,7 +52,7 @@ Color _typeColor(MessageType type) {
   switch (type) {
     case MessageType.question: return _kAccent;
     case MessageType.reply:    return _kReplyColor;
-    case MessageType.ai:       return _kAiColor;
+    case MessageType.ai:       return _kAiOrange;
   }
 }
 
@@ -395,32 +401,44 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
     );
   }
 
-  // ── Navbar ──────────────────────────────────────────────────────────────────
+  // ── Header (mirrors the Home page title block) ──────────────────────────────
   Widget _buildNavbar() {
     final cs = Theme.of(context).colorScheme;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
     return Container(
       color:   bgColor,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 20, 12, 8),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const IconBadge(
-              icon: Icons.public_rounded, color: _kAiColor, size: 42),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const _HubLabel(text: 'COMMUNITY · ANONYMOUS'),
+                const SizedBox(height: 8),
                 Text('Community Hub',
-                    style: _m(size: 16, weight: FontWeight.w900,
-                        color: cs.onSurface)),
+                    style: _m(size: 30, weight: FontWeight.w900,
+                        color: cs.onSurface, height: 1.1)),
+                const SizedBox(height: 6),
                 Text(
-                  'Ask, share and fact-check together · anonymous',
-                  style: _m(size: 11, weight: FontWeight.w500,
-                      color: cs.onSurface.withValues(alpha: 0.7)),
+                  'Ask, share and fact-check together.',
+                  style: _m(size: 13, weight: FontWeight.w500,
+                      color: cs.onSurface.withValues(alpha: 0.7), height: 1.5),
                 ),
               ],
             ),
+          ),
+          // Community safety info — the precautions in place for user posts.
+          IconButton(
+            tooltip: 'Community safety',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const CommunitySafetyPage()));
+            },
+            icon: Icon(Icons.info_outline_rounded,
+                color: cs.onSurface.withValues(alpha: 0.75)),
           ),
           const ProfileIcon(),
         ],
@@ -501,31 +519,29 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
   Widget _buildEmptyState() {
     final cs = Theme.of(context).colorScheme;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 24),
-          const IconBadge(icon: Icons.public_rounded, color: _kAiColor, size: 84),
-          const SizedBox(height: 18),
-          Text('Community Explanation Hub',
-              textAlign: TextAlign.center,
-              style: _m(size: 20, weight: FontWeight.w900,
-                  color: cs.onSurface)),
-          const SizedBox(height: 10),
           Text(
             'Ask "Is this real?" about any headline, claim, or social post — or share what you know to help others. AI analysis included. Completely anonymous.',
-            textAlign: TextAlign.center,
-            style: _m(size: 13, weight: FontWeight.w500,
-                color: cs.onSurface.withValues(alpha: 0.7), height: 1.65),
+            style: _m(size: 14, weight: FontWeight.w500,
+                color: cs.onSurface.withValues(alpha: 0.7), height: 1.6),
           ),
           const SizedBox(height: 24),
           // Who responds card
           Container(
-            padding:     const EdgeInsets.all(16),
+            padding:     const EdgeInsets.all(18),
             decoration:  BoxDecoration(
               color:        cs.surface,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
               border:       Border.all(color: cs.outlineVariant),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4)),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -641,7 +657,7 @@ class _CommunityHubPageState extends State<CommunityHubPage> {
             Expanded(
               child: Text(
                 'Your account is restricted from posting here after multiple '
-                'community reports. Contact support@credexa.app if you think '
+                'community reports. Contact credexa.support@gmail.com if you think '
                 'this is a mistake.',
                 style: _m(size: 12, weight: FontWeight.w600,
                     color: cs.onSurface.withValues(alpha: 0.8), height: 1.4),
@@ -1082,7 +1098,9 @@ class _MessageBubbleState extends State<_MessageBubble>
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: widget.message.isQuestion ? _buildQuestion() : _buildResponder(),
+          // Own posts (questions or replies) go right in green; everyone else's
+          // go left in their type colour.
+          child: _isOwn ? _buildQuestion() : _buildResponder(),
         ),
         for (final entry in _floatingEmojis)
           _FloatingEmojiWidget(entry: entry),
@@ -1112,10 +1130,7 @@ class _MessageBubbleState extends State<_MessageBubble>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_isOwn)
-                    _deleteButton(cs.onSurface.withValues(alpha: 0.7))
-                  else
-                    _moderationButton(cs.onSurface.withValues(alpha: 0.7)),
+                  _deleteButton(cs.onSurface.withValues(alpha: 0.7)),
                   Text('Anonymous',
                       style: _m(size: 11, weight: FontWeight.w700,
                           color: cs.onSurface.withValues(alpha: 0.7))),
@@ -1183,7 +1198,8 @@ class _MessageBubbleState extends State<_MessageBubble>
   // AI and Community replies go on the LEFT
   Widget _buildResponder() {
     final cs = Theme.of(context).colorScheme;
-    final color   = _typeColor(widget.message.type);
+    final isQuestion = widget.message.type == MessageType.question;
+    final color   = isQuestion ? _kQuestionInk : _typeColor(widget.message.type);
     final isAi    = widget.message.type == MessageType.ai;
     final bytes   = widget.message.imageBytes;
     final myEmoji = widget.currentUserId != null
@@ -1219,10 +1235,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                   ],
                   Text(widget.message.authorLabel,
                       style: _m(size: 11, weight: FontWeight.w800, color: color)),
-                  if (_isOwn)
-                    _deleteButton(color)
-                  else
-                    _moderationButton(color),
+                  _moderationButton(color),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1261,9 +1274,14 @@ class _MessageBubbleState extends State<_MessageBubble>
                       if (widget.message.text.isNotEmpty) const SizedBox(height: 8),
                     ],
                     if (widget.message.text.isNotEmpty)
-                      Text(widget.message.text,
-                          style: _m(size: 13, weight: FontWeight.w500,
-                              color: cs.onSurface, height: 1.55)),
+                      isAi
+                          ? _AiBody(
+                              text:  widget.message.text,
+                              color: color,
+                              ink:   cs.onSurface)
+                          : Text(widget.message.text,
+                              style: _m(size: 13, weight: FontWeight.w500,
+                                  color: cs.onSurface, height: 1.55)),
                   ],
                 ),
               ),
@@ -1419,6 +1437,85 @@ class _TypingIndicator extends StatefulWidget {
   State<_TypingIndicator> createState() => _TypingIndicatorState();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  AI BODY — renders a short verdict line plus bullet points. Lines that start
+//  with "- " become bullets; the "Verdict" line is emphasised. Older plain-prose
+//  replies still display, as ordinary paragraphs.
+// ─────────────────────────────────────────────────────────────────────────────
+class _AiBody extends StatelessWidget {
+  const _AiBody({required this.text, required this.color, required this.ink});
+  final String text;
+  final Color color; // verdict + bullet accent
+  final Color ink;   // body text
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text
+        .split('\n')
+        .map((l) => l.trim().replaceAll('**', ''))
+        .where((l) => l.isNotEmpty)
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final line in lines)
+          if (line.startsWith('- ') || line.startsWith('• ') || line.startsWith('* '))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7, right: 8),
+                    child: Container(
+                      width: 5, height: 5,
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(line.substring(2),
+                        style: _m(size: 13, weight: FontWeight.w500,
+                            color: ink, height: 1.5)),
+                  ),
+                ],
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(line,
+                  style: line.toLowerCase().startsWith('verdict')
+                      ? _m(size: 13, weight: FontWeight.w800,
+                          color: color, height: 1.5)
+                      : _m(size: 13, weight: FontWeight.w500,
+                          color: ink, height: 1.5)),
+            ),
+      ],
+    );
+  }
+}
+
+// Section pill, same look as the Home page label.
+class _HubLabel extends StatelessWidget {
+  const _HubLabel({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _kAiColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Text(text,
+          style: _m(size: 11, weight: FontWeight.w800, color: _kAiColor,
+              spacing: 1.1)),
+    );
+  }
+}
+
 class _TypingIndicatorState extends State<_TypingIndicator>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
@@ -1446,7 +1543,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           const IconBadge(
-              icon: Icons.auto_awesome_rounded, color: _kAiColor, size: 34),
+              icon: Icons.auto_awesome_rounded, color: _kAiOrange, size: 34),
           const SizedBox(width: 8),
           Container(
             padding:     const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -1458,7 +1555,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
                 bottomLeft:  Radius.circular(18),
                 bottomRight: Radius.circular(18),
               ),
-              border: Border.all(color: _kAiColor.withValues(alpha: 0.2)),
+              border: Border.all(color: _kAiOrange.withValues(alpha: 0.2)),
             ),
             child: AnimatedBuilder(
               animation: _ctrl,
@@ -1474,7 +1571,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
                       child: Container(
                         width: 7, height: 7,
                         decoration: const BoxDecoration(
-                          color: _kAiColor, shape: BoxShape.circle,
+                          color: _kAiOrange, shape: BoxShape.circle,
                         ),
                       ),
                     ),

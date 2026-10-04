@@ -153,6 +153,37 @@ class WebSearchService {
     }
   }
 
+  /// Broad, multi-month headlines about a person (promises, votes, bills), one
+  /// unrestricted Google News query per angle. Returns up to [max] unique items,
+  /// newest first, each with its date and link.
+  static Future<List<Map<String, String>>> broadHeadlines(
+    String name, {
+    List<String> angles = const [
+      'promises', 'broken promise', 'voted', 'vote on bill', 'signed into law',
+    ],
+    int max = 30,
+  }) async {
+    final batches = await Future.wait(
+        angles.map((a) => _googleNewsRssItems('"$name" $a')));
+    final seen  = <String>{};
+    final items = <Map<String, String>>[];
+    for (final batch in batches) {
+      for (final item in batch) {
+        final title = item['title'] ?? '';
+        if (title.isNotEmpty && seen.add(title)) items.add(item);
+      }
+    }
+    DateTime? at(Map<String, String> m) => DateTime.tryParse(m['publishedAt'] ?? '');
+    items.sort((a, b) {
+      final da = at(a), db = at(b);
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+    return items.take(max).toList();
+  }
+
   /// Fetches up to [max] article URLs in parallel and extracts a plain-text
   /// excerpt from each page body (strips tags, scripts, styles).
   ///
@@ -245,7 +276,8 @@ class WebSearchService {
       final url    = rawUrl.isNotEmpty ? rawUrl : _tag(chunk, 'guid');
       if (title.isNotEmpty) {
         items.add({
-          'title': title, 'source': source, 'pubDate': date, 'url': url,
+          'title': title, 'source': source, 'pubDate': date,
+          'publishedAt': _isoUtc(_tag(chunk, 'pubDate')), 'url': url,
         });
       }
     }
@@ -275,6 +307,24 @@ class WebSearchService {
         .replaceAll(RegExp(r'&gt;'), '>')
         .replaceAll(RegExp(r'&quot;'), '"')
         .trim();
+  }
+
+  // Converts an RFC 822 date ("Mon, 26 May 2026 04:12:00 GMT") to a UTC ISO-8601
+  // string so items can be compared. Returns '' if the date can't be read.
+  static String _isoUtc(String rfc822) {
+    final m = RegExp(r'(\d{1,2}) (\w{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2})')
+        .firstMatch(rfc822);
+    if (m == null) return '';
+    const months = {
+      'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+      'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+    };
+    final month = months[m.group(2)];
+    if (month == null) return '';
+    return DateTime.utc(
+      int.parse(m.group(3)!), month, int.parse(m.group(1)!),
+      int.parse(m.group(4)!), int.parse(m.group(5)!), int.parse(m.group(6)!),
+    ).toIso8601String();
   }
 
   // Shortens "Mon, 26 May 2026 04:12:00 GMT" → "May 26 2026"

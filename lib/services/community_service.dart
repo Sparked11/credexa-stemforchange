@@ -477,19 +477,19 @@ A community member shared an image and asked: "$effectiveQ"
 Your task: fact-check the CLAIM OR INFORMATION shown in this image.
 1. Look at the image and the extracted text above.
 2. Use the web evidence (if provided) to verify whether what the image shows or says is true, false, or misleading.
-3. Write a clear response of 3–5 sentences:
-   • Sentence 1: State directly whether the claim or content in the image is TRUE, FALSE, MISLEADING, or UNVERIFIABLE — and why, citing web sources by name if available (e.g., "According to Reuters…").
-   • Sentence 2: Add any important factual context or nuance.
-   • Sentence 3: Name any manipulation technique present in the image itself (AI-generated, photoshopped, fake headline overlay, etc.) — or confirm the image appears authentic.
-   • Sentence 4–5 (optional): Explain the misinformation technique used, if any.
-   • Final sentence: Give one concrete action the reader can take to verify this themselves.
+3. Format the answer exactly like this, and keep the whole reply under 90 words:
+Verdict: TRUE, FALSE, MISLEADING, or UNVERIFIABLE, plus one short reason (name a source if the web evidence gives one).
+- One key fact or piece of context.
+- Whether the image itself looks manipulated or authentic, in a few words.
+- The manipulation technique used, if any.
+- Check it: one concrete action the reader can take.
 
 Rules:
 - Prioritize fact-checking the TEXT/CLAIM in the image over judging visual authenticity.
 - If web evidence above contradicts or confirms the claim, say so and name the source.
 - Write for a 13–17 year old audience. Clear, friendly, no jargon.
-- Do NOT use bullet points, headers, or labels. Write as natural flowing prose.
-- Return ONLY the response text — no JSON, no markdown, no preamble.''';
+- Use 3 or 4 bullet points, each starting with "- ". No headers, no bold, no markdown.
+- Return ONLY the response text — no JSON, no preamble.''';
     } else {
       prompt = '''
 You are an expert fact-checker in the Credexa Community Explanation Hub — a safe, anonymous space where teens ask "Is this real?" about news and social media.
@@ -497,19 +497,20 @@ Today's date is ${_today()}. Do NOT treat any date on or before today as a futur
 
 A community member asked: "$effectiveQ"
 
-Write a clear, well-grounded response of 3–5 sentences:
-• Sentences 1–2: Give a direct, factual verdict backed by the web evidence above where relevant. Say clearly what is true, false, or uncertain. Cite the source name (e.g., "According to Reuters…") if you draw on the evidence.
-• Sentence 3: Name the specific misinformation technique if one is used (e.g., "This uses cherry-picking" / "This is a false headline designed to cause outrage") — or confirm why the claim is credible based on the evidence.
-• Sentence 4–5 (optional, only if the evidence warrants): Add any important nuance or context that helps a teen understand the full picture.
-• Final sentence: Give one concrete action the reader can take to verify this themselves.
+Format the answer exactly like this, and keep the whole reply under 90 words:
+Verdict: TRUE, FALSE, MISLEADING, or UNVERIFIABLE, plus one short reason (name the source if the web evidence gives one, e.g. "According to Reuters…").
+- The key fact or context that matters most.
+- The specific misinformation technique used, if any (e.g. cherry-picking, a false headline built to cause outrage), or why the claim is credible.
+- One useful nuance, only if the evidence warrants it.
+- Check it: one concrete action the reader can take to verify this themselves.
 
 Rules:
 - Write for a 13–17 year old audience. Clear, friendly, no jargon.
 - Be fair and non-partisan. If a claim is true, say so clearly with evidence.
 - If the web evidence above contradicts or confirms the claim, prioritize that over your training data.
 - If uncertain, say so honestly rather than guessing.
-- Do NOT use bullet points, headers, or labels. Write as natural flowing prose.
-- Return ONLY the response text — no JSON, no markdown, no preamble.''';
+- Use 3 or 4 bullet points, each starting with "- ". No headers, no bold, no markdown.
+- Return ONLY the response text — no JSON, no preamble.''';
     }
 
     // Build message content — multimodal when image is present.
