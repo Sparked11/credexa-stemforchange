@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ignore: unnecessary_import
+import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'models/news_article.dart';
@@ -301,6 +302,19 @@ class _MainAppState extends State<MainApp>
   }
 
   Future<void> _tryLoadDailyQuest() async {
+    if (!mounted) return;
+    // "Already seen today" is stored per account. Firebase Auth restores the
+    // signed-in session asynchronously and main() doesn't wait for it, so on
+    // a slow restore this could still read/write under an anonymous key —
+    // making a just-completed quest reappear once the real account loads on
+    // the next launch. authStateChanges() replays the current state to a new
+    // listener, so this resolves immediately once auth is actually settled.
+    try {
+      await fb.FirebaseAuth.instance
+          .authStateChanges()
+          .first
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
     if (!mounted) return;
     final shouldShow = await UserProgressService.shouldShowDailyQuest();
     if (!shouldShow || !mounted) return;
@@ -3672,9 +3686,15 @@ class _QuestFloatingBadgeState extends State<_QuestFloatingBadge>
   static const double _h = 52;
   static const double _margin = 12;
 
-  // Remembered for the session so the badge returns where the user left it.
+  // Remembered across app launches, in a plain (non-account-namespaced) key —
+  // this is a cosmetic screen position, not user data, so it doesn't need
+  // Firebase Auth to be ready, and the static fields just cache it in memory
+  // for the rest of this run once loaded.
+  static const _kTopKey = 'quest_badge_top';
+  static const _kDockRightKey = 'quest_badge_dock_right';
   static double? _savedTop;
   static bool _savedDockRight = true;
+  static bool _positionLoaded = false;
 
   late final AnimationController _pulse;
   Timer? _collapseTimer;
@@ -3692,6 +3712,32 @@ class _QuestFloatingBadgeState extends State<_QuestFloatingBadge>
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
     _collapseTimer = Timer(const Duration(seconds: 4), _collapse);
+    _loadSavedPosition();
+  }
+
+  Future<void> _loadSavedPosition() async {
+    if (_positionLoaded) return; // already loaded earlier this run
+    try {
+      final p = await SharedPreferences.getInstance();
+      final top = p.getDouble(_kTopKey);
+      final dockRight = p.getBool(_kDockRightKey);
+      _positionLoaded = true;
+      if (top != null) _savedTop = top;
+      if (dockRight != null) _savedDockRight = dockRight;
+      if (!mounted || (top == null && dockRight == null)) return;
+      setState(() {
+        if (top != null) _top = top;
+        if (dockRight != null) _dockRight = dockRight;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistPosition() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      if (_savedTop != null) await p.setDouble(_kTopKey, _savedTop!);
+      await p.setBool(_kDockRightKey, _savedDockRight);
+    } catch (_) {}
   }
 
   @override
@@ -3763,6 +3809,7 @@ class _QuestFloatingBadgeState extends State<_QuestFloatingBadge>
                         _savedDockRight = _dockRight;
                         _savedTop = _top;
                       });
+                      _persistPosition();
                       _collapseTimer =
                           Timer(const Duration(seconds: 3), _collapse);
                     },

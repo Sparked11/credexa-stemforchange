@@ -1157,14 +1157,20 @@ class _CouncilPainter extends CustomPainter {
 
     if (phase < 0.12) return;
 
-    // Particles
-    for (final (a, b) in _pairs) {
-      final end = isSynth ? center : positions[b];
-      _drawParticle(canvas, positions[a], end, pulse, colors[a], 1.0);
-      if (!isSynth) {
+    // Particles. _pairs always lists the lower index first, so drawing one
+    // bright particle per pair would always favor the same model (and always
+    // dim or drop the other) — every model gets its own equally bright
+    // particle instead, so all three stay visible throughout.
+    if (isSynth) {
+      for (var i = 0; i < positions.length; i++) {
+        _drawParticle(canvas, positions[i], center, pulse, colors[i], 1.0);
+      }
+    } else {
+      for (final (a, b) in _pairs) {
+        _drawParticle(canvas, positions[a], positions[b], pulse, colors[a], 1.0);
         _drawParticle(
           canvas, positions[b], positions[a],
-          (pulse + 0.5) % 1.0, colors[b], 0.45,
+          (pulse + 0.5) % 1.0, colors[b], 1.0,
         );
       }
     }

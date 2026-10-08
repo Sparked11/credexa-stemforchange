@@ -1,24 +1,35 @@
 import 'package:http/http.dart' as http;
 
-/// Searches Google News RSS for recent articles related to a claim.
-/// Returns formatted headlines the AI can use as grounded, dated context.
-/// Falls back to empty string on any network failure so callers proceed cleanly.
+/// Searches news feeds for articles related to a claim.
+///
+/// A claim can be from today or from years ago, so results are never filtered
+/// to "recent only" — that would silently drop coverage of an old claim.
+/// Instead, an extra pass restricted to the last 7 days runs alongside the
+/// normal unrestricted search, and every result is sorted newest first. Recency
+/// decides order, never inclusion, and every item keeps its date so the AI
+/// models can judge for themselves how current (or how old) the evidence is.
+///
+/// Falls back to empty results on any network failure so callers proceed cleanly.
 class WebSearchService {
+  /// Short, dated headline lines for the AI prompt.
   static Future<String> quickFact(String claim) async {
-    // Run both searches in parallel; combine whatever succeeds.
-    final results = await Future.wait([
-      _googleNewsRss(claim),
-      _googleNewsRss(_extractKeyPhrase(claim)), // second pass with shorter query
+    final batches = await Future.wait([
+      _googleNewsRssItems(claim),
+      _googleNewsRssItems(_extractKeyPhrase(claim)), // second pass, shorter query
+      _googleNewsRssItems(claim, recent: true), // catches this week's coverage
     ]);
+    final items = _dedupeNewestFirst(batches);
 
-    final unique = <String>{};
-    final headlines = <String>[];
-    for (final block in results) {
-      for (final line in block.split('\n')) {
-        if (line.isNotEmpty && unique.add(line)) headlines.add(line);
-      }
-    }
-    return headlines.take(6).join('\n');
+    return items.take(6).map((item) {
+      final title  = item['title']   ?? '';
+      final source = item['source']  ?? '';
+      final date   = item['pubDate'] ?? '';
+      if (title.isEmpty) return '';
+      final parts = <String>[];
+      if (source.isNotEmpty) parts.add(source);
+      if (date.isNotEmpty)   parts.add(date);
+      return '• $title${parts.isNotEmpty ? " [${parts.join(', ')}]" : ""}';
+    }).where((s) => s.isNotEmpty).join('\n');
   }
 
   // Strips stopwords to get a tighter search query (e.g. job statistics by topic).
@@ -38,44 +49,14 @@ class WebSearchService {
     return words.join(' ');
   }
 
-  static Future<String> _googleNewsRss(String query) async {
-    if (query.trim().isEmpty) return '';
-    try {
-      final encoded = Uri.encodeComponent(query.trim());
-      final uri = Uri.parse(
-        'https://news.google.com/rss/search?q=$encoded&hl=en-US&gl=US&ceid=US:en',
-      );
-      final resp = await http.get(uri, headers: {
-        'User-Agent':
-            'Mozilla/5.0 (compatible; CredeXa/1.0; +https://credexa.app)',
-        'Accept': 'application/rss+xml, application/xml, text/xml',
-      }).timeout(const Duration(seconds: 10));
-
-      if (resp.statusCode != 200) return '';
-      final items = _parseRss(resp.body);
-      if (items.isEmpty) return '';
-
-      return items.take(5).map((item) {
-        final title  = item['title']   ?? '';
-        final source = item['source']  ?? '';
-        final date   = item['pubDate'] ?? '';
-        if (title.isEmpty) return '';
-        final parts = <String>[];
-        if (source.isNotEmpty) parts.add(source);
-        if (date.isNotEmpty)   parts.add(date);
-        return '• $title${parts.isNotEmpty ? " [${parts.join(', ')}]" : ""}';
-      }).where((s) => s.isNotEmpty).join('\n');
-    } catch (_) {
-      return '';
-    }
-  }
-
-  /// Returns up to [max] structured article items with real, scrapeable URLs.
+  /// Returns up to [max] structured article items, newest first.
   ///
-  /// Uses Bing News RSS as the primary source because its `<link>` tags contain
-  /// the actual article URL (no redirect), so [scrapeArticles] can fetch real
-  /// content. Google News RSS is kept as a fallback; its redirect URLs are only
-  /// usable for headline text, not reliable scraping.
+  /// Bing News RSS is included because its `<link>` tags are real article
+  /// URLs (no redirect), which [scrapeArticles] can fetch; Google News items
+  /// have redirect URLs, usable for headline text either way. All sources run
+  /// together so an old claim still gets its full coverage — only the extra
+  /// `recent` pass is date-restricted, to make sure this week's coverage of a
+  /// current claim isn't buried under months of older results.
   static Future<List<Map<String, String>>> searchWithLinks(
     String claim, {
     int max = 3,
@@ -86,24 +67,13 @@ class WebSearchService {
         ? claim.trim().substring(0, 200)
         : claim.trim();
 
-    // Bing News RSS returns actual article URLs — preferred for scraping.
-    final bingItems = await _bingNewsRssItems(q);
-    if (bingItems.isNotEmpty) return bingItems.take(max).toList();
-
-    // Fallback: Google News RSS (links are Google redirects; scraping limited).
-    final results = await Future.wait([
+    final batches = await Future.wait([
+      _bingNewsRssItems(q),
       _googleNewsRssItems(q),
       _googleNewsRssItems(_extractKeyPhrase(q)),
+      _googleNewsRssItems(q, recent: true), // catches this week's coverage
     ]);
-    final seen  = <String>{};
-    final items = <Map<String, String>>[];
-    for (final batch in results) {
-      for (final item in batch) {
-        final title = item['title'] ?? '';
-        if (title.isNotEmpty && seen.add(title)) items.add(item);
-      }
-    }
-    return items.take(max).toList();
+    return _dedupeNewestFirst(batches).take(max).toList();
   }
 
   /// Fetches Bing News RSS for [query] and returns article items.
@@ -134,10 +104,17 @@ class WebSearchService {
     }
   }
 
-  static Future<List<Map<String, String>>> _googleNewsRssItems(String query) async {
+  /// With [recent], restricts to the last 7 days via Google's `when:7d`
+  /// search operator — used only for the extra freshness pass, never for the
+  /// main unrestricted queries, so older coverage is never excluded outright.
+  static Future<List<Map<String, String>>> _googleNewsRssItems(
+    String query, {
+    bool recent = false,
+  }) async {
     if (query.trim().isEmpty) return [];
     try {
-      final encoded = Uri.encodeComponent(query.trim());
+      final term    = recent ? '${query.trim()} when:7d' : query.trim();
+      final encoded = Uri.encodeComponent(term);
       final uri = Uri.parse(
         'https://news.google.com/rss/search?q=$encoded&hl=en-US&gl=US&ceid=US:en',
       );
@@ -165,6 +142,14 @@ class WebSearchService {
   }) async {
     final batches = await Future.wait(
         angles.map((a) => _googleNewsRssItems('"$name" $a')));
+    return _dedupeNewestFirst(batches).take(max).toList();
+  }
+
+  /// Merges several item batches, drops duplicate titles, and sorts the result
+  /// newest first. Items with no readable date sort last, but are kept — a
+  /// missing date is not a reason to drop coverage of a claim.
+  static List<Map<String, String>> _dedupeNewestFirst(
+      List<List<Map<String, String>>> batches) {
     final seen  = <String>{};
     final items = <Map<String, String>>[];
     for (final batch in batches) {
@@ -181,7 +166,7 @@ class WebSearchService {
       if (db == null) return -1;
       return db.compareTo(da);
     });
-    return items.take(max).toList();
+    return items;
   }
 
   /// Fetches up to [max] article URLs in parallel and extracts a plain-text
@@ -219,8 +204,9 @@ class WebSearchService {
       if (excerpt.length < 80) return null;
 
       return <String, String>{
-        'title':   a['title']  ?? '',
-        'source':  a['source'] ?? '',
+        'title':   a['title']   ?? '',
+        'source':  a['source']  ?? '',
+        'pubDate': a['pubDate'] ?? '',
         'url':     url,
         'excerpt': excerpt,
       };

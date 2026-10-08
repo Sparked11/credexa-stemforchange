@@ -447,15 +447,20 @@ If safe, reason must be null.''',
     if (articles.isEmpty) {
       articleBlock = '';
     } else {
-      final buf = StringBuffer('\n\n━━ WEB EVIDENCE (scraped today) ━━\n');
+      final buf = StringBuffer(
+          '\n\n━━ WEB EVIDENCE (fetched today; each date is when it was '
+          'published, not necessarily when the claim happened) ━━\n');
       for (var i = 0; i < articles.length; i++) {
         final a       = articles[i];
         final source  = a['source']  ?? '';
         final title   = a['title']   ?? '';
+        final date    = a['pubDate'] ?? '';
         final excerpt = a['excerpt'] ?? '';
         buf.write('[${i + 1}] ');
         if (source.isNotEmpty) buf.write('$source — ');
-        buf.writeln(title);
+        buf.write(title);
+        if (date.isNotEmpty) buf.write(' ($date)');
+        buf.writeln();
         if (excerpt.isNotEmpty) buf.writeln(excerpt);
         buf.writeln();
       }

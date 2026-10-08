@@ -659,13 +659,23 @@ void showBadgeDetail(BuildContext context, BadgeInfo badge, Color color,
   showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => Container(
+    // Badges with more than one requirement (e.g. Credexa Champion, which
+    // tracks fact-checks + de-biases + posts) render one progress row per
+    // requirement, so this sheet's content height varies by badge. Scrolling
+    // it, instead of a fixed Column, keeps every badge's sheet safe, not just
+    // the single-requirement ones.
+    isScrollControlled: true,
+    builder: (ctx) => ConstrainedBox(
+      constraints:
+          BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+      child: Container(
       padding: EdgeInsets.fromLTRB(
           24, 14, 24, 28 + MediaQuery.of(ctx).padding.bottom),
       decoration: BoxDecoration(
         color: isDark ? AppColors.slate900 : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
+      child: SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -784,6 +794,8 @@ void showBadgeDetail(BuildContext context, BadgeInfo badge, Color color,
           ],
         ],
       ),
+      ),
+    ),
     ),
   );
 }

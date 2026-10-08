@@ -62,21 +62,26 @@ class AnalysisService {
     if (scraped.isNotEmpty) {
       final buf = StringBuffer(
         'SCRAPED WEB ARTICLES '
-        '(actual article content retrieved today — treat as PRIMARY evidence):\n',
+        '(fetched today, but may report on events from any date — use the '
+        'date shown for each one, not today\'s date, as when it happened; '
+        'treat as PRIMARY evidence):\n',
       );
       for (int i = 0; i < scraped.length; i++) {
         final a       = scraped[i];
         final title   = a['title']   ?? '';
         final source  = a['source']  ?? 'Unknown source';
+        final date    = a['pubDate'] ?? '';
         final excerpt = a['excerpt'] ?? '';
-        buf.writeln('[${i + 1}] $source — $title');
+        buf.writeln('[${i + 1}] $source — $title${date.isNotEmpty ? ' ($date)' : ''}');
         if (excerpt.isNotEmpty) buf.writeln('    $excerpt');
       }
       return buf.toString().trimRight();
     }
     if (fallbackHeadlines.isNotEmpty) {
       return 'LIVE NEWS HEADLINES '
-          '(from Google News, retrieved today — use as PRIMARY evidence):\n'
+          '(fetched today; each one is dated — that date is when it was '
+          'published, not necessarily when the claim happened — use as '
+          'PRIMARY evidence):\n'
           '$fallbackHeadlines';
     }
     return 'No live web results available — reason carefully about what is '
@@ -162,10 +167,14 @@ class AnalysisService {
   ///             date and the scraped article excerpts as primary evidence.
   ///
   ///   Round 2 — each model receives: (a) peer AI verdicts from Round 1 and
-  ///             (b) the objective Web Search keyword-match verdict. Models must
-  ///             reconsider before finalising. The Web Search result is appended
-  ///             to the returned [AnalysisResult] and its score is blended (25 %)
-  ///             into the synthesis final score.
+  ///             (b) a Web Search keyword-match signal, shown as context only.
+  ///             That signal counts vocabulary overlap, not agreement or
+  ///             disagreement with the claim — an article titled "No, 5G does
+  ///             NOT cause cancer" matches every claim keyword — so it is never
+  ///             blended into the final score. The real models already read the
+  ///             same evidence directly and judge its direction correctly; the
+  ///             Web Search result is appended to the returned [AnalysisResult]
+  ///             for transparency only.
   static Future<AnalysisResult> analyzeWithSearch(String claim) async {
     final today   = DateTime.now();
     final dateStr = '${_monthName(today.month)} ${today.day}, ${today.year}';
@@ -253,14 +262,14 @@ SCORING RULES:
 
     final round2 = await analyze(round2Prompt);
 
-    // Blend Web Search and debate scores into synthesis.
-    final blendedScore =
-        ((round2.synthesis.finalScore * 3 + webResult.credibilityScore) / 4).round();
-
+    // The Web Search score is NOT blended in here: it only counts keyword
+    // overlap, so it can't tell confirming coverage from debunking coverage.
+    // The three real models already read this evidence directly in Round 2
+    // and reasoned about its direction, so round2's score is the final one.
     return AnalysisResult(
       modelResults: [...round2.modelResults, webResult],
       synthesis: Synthesis(
-        finalScore:   blendedScore,
+        finalScore:   round2.synthesis.finalScore,
         finalVerdict: round2.synthesis.finalVerdict,
         agreements:   round2.synthesis.agreements,
         conflicts:    round2.synthesis.conflicts,
